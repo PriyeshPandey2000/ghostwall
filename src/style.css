@@ -435,6 +435,13 @@ html, body {
   z-index: 200;
   animation: slideUp 0.4s ease-out;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .toolbar-group {
@@ -447,78 +454,8 @@ html, body {
   width: 1px;
   height: 24px;
   background: var(--border);
-  margin: 0 8px;
-}
-
-.more-tools {
-  position: relative;
-}
-
-.more-tools-panel {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%) translateY(6px);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 6px;
-  min-width: 220px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
-  z-index: 300;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.more-tools-panel.open {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateX(-50%) translateY(0);
-}
-
-.more-tool-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s;
-}
-
-.more-tool-btn:hover {
-  background: rgba(255,255,255,0.06);
-}
-
-.more-tool-btn.active {
-  background: rgba(255,77,77,0.15);
-}
-
-.more-tool-icon {
-  font-size: 18px;
-  width: 24px;
-  text-align: center;
-}
-
-.more-tool-label {
-  font-size: 13px;
-  font-family: var(--font);
-  flex: 1;
-}
-
-.more-tool-hint {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: var(--mono);
+  margin: 0 4px;
+  flex-shrink: 0;
 }
 
 .tool-btn {
@@ -535,6 +472,7 @@ html, body {
   transition: all 0.15s;
   font-size: 18px;
   position: relative;
+  flex-shrink: 0;
 }
 
 .tool-btn:hover {

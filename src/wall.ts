@@ -6,24 +6,20 @@ import type { WallObject } from './types';
 
 type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'react';
 
-// The wall should feel like a place, not an editor. Only the four verbs that
-// matter for the first visit sit in the primary toolbar; everything else hides
-// under "More" so the tool-feeling never leads the experience.
-const PRIMARY_TOOLS: { id: Tool; icon: string; label: string }[] = [
+// All tools live in one horizontal bar — no hidden submenu. The four verbs that
+// matter on a first visit come first; the rest follow in the same row.
+const TOOLS: { id: Tool; icon: string; label: string }[] = [
   { id: 'draw', icon: '✏️', label: 'Draw' },
   { id: 'text', icon: 'Aa', label: 'Text' },
   { id: 'erase', icon: '🧽', label: 'Erase' },
   { id: 'react', icon: '❤️', label: 'React' },
-];
-
-const MORE_TOOLS: { id: Tool; icon: string; label: string; hint: string }[] = [
-  { id: 'select', icon: '🖱️', label: 'Select & pan', hint: 'drag empty space to move around' },
-  { id: 'sticker', icon: '🎨', label: 'Sticker', hint: 'drop a sticker' },
-  { id: 'rect', icon: '▭', label: 'Rectangle', hint: 'outline shape' },
-  { id: 'circle', icon: '◯', label: 'Circle', hint: 'outline shape' },
-  { id: 'image', icon: '🖼️', label: 'Image', hint: 'upload a picture' },
-  { id: 'secret', icon: '🤫', label: 'Secret', hint: 'hide a message, reveal to click' },
-  { id: 'timecapsule', icon: '🔒', label: 'Time capsule', hint: 'locked until a date' },
+  { id: 'select', icon: '🖱️', label: 'Select & pan' },
+  { id: 'sticker', icon: '🎨', label: 'Sticker' },
+  { id: 'rect', icon: '▭', label: 'Rectangle' },
+  { id: 'circle', icon: '◯', label: 'Circle' },
+  { id: 'image', icon: '🖼️', label: 'Image' },
+  { id: 'secret', icon: '🤫', label: 'Secret' },
+  { id: 'timecapsule', icon: '🔒', label: 'Time capsule' },
 ];
 
 const COLORS = [
@@ -55,24 +51,11 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       </div>
 
       <div class="toolbar" id="toolbar">
-        ${PRIMARY_TOOLS.map(t => `
+        ${TOOLS.map(t => `
           <button class="tool-btn ${t.id === 'draw' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
             <span>${t.icon}</span>
           </button>
         `).join('')}
-        <div class="toolbar-divider"></div>
-        <div class="more-tools" id="more-tools">
-          <button class="tool-btn" id="btn-more" data-tooltip="More tools">➕</button>
-          <div class="more-tools-panel" id="more-tools-panel">
-            ${MORE_TOOLS.map(t => `
-              <button class="more-tool-btn" data-tool="${t.id}">
-                <span class="more-tool-icon">${t.icon}</span>
-                <span class="more-tool-label">${t.label}</span>
-                <span class="more-tool-hint">${t.hint}</span>
-              </button>
-            `).join('')}
-          </div>
-        </div>
         <div class="toolbar-divider"></div>
         <div class="color-picker-wrapper" id="color-picker">
           <div class="color-swatch" id="color-swatch" style="background:${COLORS[0]}"></div>
@@ -141,36 +124,22 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   }
 
   function setupToolbar(engineRef: CanvasEngine, _profile: typeof userProfile): void {
-    const allToolButtons = document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn');
-    const morePanel = document.getElementById('more-tools-panel');
-    const moreBtn = document.getElementById('btn-more');
-
-    moreBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      morePanel?.classList.toggle('open');
-    });
-    // Close the More menu when clicking anywhere else
-    document.addEventListener('click', (e) => {
-      const wrap = document.getElementById('more-tools');
-      if (wrap && !wrap.contains(e.target as Node)) morePanel?.classList.remove('open');
-    });
+    const allToolButtons = document.querySelectorAll('.tool-btn[data-tool]');
 
     allToolButtons.forEach(btn => {
       btn.addEventListener('click', () => {
         const tool = (btn as HTMLElement).dataset.tool as Tool;
         if (tool === 'image') {
           // image uses a file picker rather than a simple tool switch
-          document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
           (btn as HTMLElement).classList.add('active');
           engineRef.setTool('image');
-          morePanel?.classList.remove('open');
           handleImageUpload();
           return;
         }
-        document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
         (btn as HTMLElement).classList.add('active');
         engineRef.setTool(tool);
-        morePanel?.classList.remove('open');
       });
     });
 
@@ -671,7 +640,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       closePopup();
       showDiscoveryMessage('Draw over it. Be the next artist.');
       // Give the toolbar's Draw button the active state.
-      document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
       document.querySelector('.tool-btn[data-tool="draw"]')?.classList.add('active');
     });
 

@@ -35,6 +35,7 @@ User feedback drive (V1.2).Reduce the tool feeling → the wall should feel like
 
 #### Toolbar: Draw · Text · Erase · React, everything else under More
 - Primary toolbar is now **Draw · Text · Erase · React**. Select moved into **More** ("Select & pan") so the first screen has zero editor chrome.
+- Subsequent feedback removed the More submenu entirely: **all 11 tools now sit in the single horizontal bar** (draw, text, erase, react, select, sticker, rect, circle, image, secret, time capsule) — no "+" icon. The bar scrolls horizontally on narrow screens (`overflow-x:auto`, hidden scrollbar). Select/pan, Sticker, etc. are direct buttons again.
 - Default active tool is **Draw** (was Select). One-time hint pill "✏️ Draw anywhere" (marker `thewall_draw_hint`) auto-dismisses after 4s and disappears forever on first dismissal or first mark.
 - New `react` tool + `getTool()` on the engine; cursors per tool (`getCursorForTool`).
 
