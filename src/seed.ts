@@ -3,6 +3,8 @@ import { saveObjects } from './storage';
 import type { WallObject } from './types';
 import { DURATION_MS } from './types';
 import { strokeToPathData } from './canvas';
+import type { SeedPayload } from './module_bindings/types';
+import { wallToObjectData } from './map';
 
 const SEED_MARKER = 'thewall_seed_v2';
 
@@ -165,17 +167,7 @@ const BASE: SeedSpec[] = [
  * a second neighborhood further out, and a couple of loners so random/explore
  * has places to take the visitor.
  */
-export function seedWallIfNeeded(): void {
-  const marker = localStorage.getItem(SEED_MARKER);
-  if (marker) return;
-
-  // Migrate away from the V1 seed wall. We can't distinguish seeded objects
-  // from real marks in the store, so clearing the old seed era wholesale is the
-  // only way to lay the curated V2 layout without duplicate ghosts on top.
-  if (localStorage.getItem('thewall_seeded_v1')) {
-    localStorage.removeItem('thewall_objects');
-  }
-
+export function buildSeedObjects(): WallObject[] {
   const objects: WallObject[] = [];
 
   const add = (spec: SeedSpec, offsetX: number, offsetY: number, rotation = spec.rotation ?? 0) => {
@@ -307,8 +299,49 @@ export function seedWallIfNeeded(): void {
   place('fourohfour', 4300, 2900);  // 🔒 "this is NOT a room"
   place('ancient', 9800, -4200);    // 30-day-old scribble, far away
 
-  saveObjects(objects);
+  return objects;
+}
+
+/** Lay the seeded wall once into local storage (single-user mode only). */
+export function seedWallIfNeeded(): void {
+  const marker = localStorage.getItem(SEED_MARKER);
+  if (marker) return;
+
+  // Migrate away from the V1 seed wall. We can't distinguish seeded objects
+  // from real marks in the store, so clearing the old seed era wholesale is the
+  // only way to lay the curated V2 layout without duplicate ghosts on top.
+  if (localStorage.getItem('thewall_seeded_v1')) {
+    localStorage.removeItem('thewall_objects');
+  }
+
+  saveObjects(buildSeedObjects());
   localStorage.setItem(SEED_MARKER, '1');
+}
+
+/**
+ * The server variant: map the seeds to `SeedPayload` rows so the `seedObjects`
+ * reducer can backdate them by `ageMicros` and give forevers `ttlMicros = 0n`.
+ * `wallToObjectData` keeps secret/timecapsule serialization consistent with
+ * creates and edits.
+ */
+export function buildSeedPayloads(): SeedPayload[] {
+  return buildSeedObjects().map((o) => ({
+    id: o.id,
+    objectType: o.type,
+    x: Math.round(o.x),
+    y: Math.round(o.y),
+    rotation: Math.round(typeof o.data.rotation === 'number' ? o.data.rotation : 0),
+    scaleX: 1,
+    scaleY: 1,
+    width: 0,
+    height: 0,
+    data: wallToObjectData(o.type, o.data),
+    authorName: o.author,
+    parentId: o.parentId ?? undefined,
+    protected: true,
+    ttlMicros: o.expiresAt && o.createdAt ? BigInt(o.expiresAt - o.createdAt) * 1000n : 0n,
+    ageMicros: BigInt(Date.now() - o.createdAt) * 1000n,
+  }));
 }
 
 /** Return an approximate camera position for the initial view (looks at the cluster). */

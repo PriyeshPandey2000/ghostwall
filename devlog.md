@@ -4,7 +4,7 @@ Reference doc for what's been built, how it works, and the decisions we've taken
 
 - **Repo:** https://github.com/PriyeshPandey2000/ghostwall
 - **Live:** https://ghostwall-two.vercel.app
-- **Stack:** Vite + TypeScript + Konva.js + perfect-freehand. No backend. No DB. No auth.
+- **Stack:** Vite + TypeScript + Konva.js + perfect-freehand + **SpacetimeDB** (shared live backend, maincloud). No auth.
 
 ---
 
@@ -27,7 +27,39 @@ The question V1/V1.1 is trying to answer: **"Is there a reason to open Ghostwall
 
 ---
 
-## Current version: V1.2 — "Place, not an editor"
+## Current version: V2 — SpacetimeDB backend (live, shared wall)
+
+The wall stopped being single-browser/localStorage-only. There is now exactly **one shared database** — every visitor (dev or prod, local or deployed) reads and writes the same live wall.
+
+### V2 work log
+
+#### SpacetimeDB module + client wired end-to-end
+- `spacetimedb/src/index.ts` — TypeScript server module: `canvasObject`, `reaction`, `comment`, `objectHistory`, `user` tables + reducers (`createObject`, `updateObject`, `deleteObject`, `drawOver`, `addReaction`, `removeReaction`, `addComment`, `setUsername`, `seedObjects`, `expireObject`). Was already written but sitting untracked/unpublished.
+- Installed the `spacetime` CLI (official installer script), logged in with a real SpacetimeDB account (anonymous identity can connect/read but can't create a maincloud db), published the module as **`ghostwall`** on `maincloud` (dashboard: https://spacetimedb.com/ghostwall). Regenerated `src/module_bindings/` against the live schema.
+- `src/spacetime.ts`'s `SpacetimeBackend` (implements the `StorageBackend` interface from `storage.ts`) existed fully coded but was never activated — `activeBackend` defaulted to `LocalStorageBackend` and nothing ever called `setBackend`/`createSpacetimeBackend`. Wired it in `main.ts`:
+  ```ts
+  const backend = createSpacetimeBackend('wss://maincloud.spacetimedb.com', 'ghostwall');
+  setBackend(backend);
+  backend.start();
+  ```
+- **Found a second orphaned piece**: `canvas.ts` had a fully-implemented `syncObjects(remote)` method (diffs remote object list against live Konva nodes, in-place update or re-render) that nothing called. `canvas.ts` only ever did `loadObjects()` once at construction — meaning even with the backend active, the canvas would've rendered empty forever (subscription data arrives async, after construction). Wired `wall.ts` to `subscribeObjects(objects => engine.syncObjects(objects))`.
+- `seedWallIfNeeded()` (client-side, localStorage-only) is now gated behind `!isSpacetime()` — seeding for the shared wall happens server-side via `spacetime.ts`'s `maybeSeed()` → `seedObjects` reducer, once, the first time a client's subscriptions apply.
+- **Verified round-trip independently of the client**: `spacetime sql ghostwall "SELECT count(*) AS n FROM canvas_object"` → 33 rows, matching what a fresh browser connection rendered via `syncObjects`.
+
+#### Dev/prod database: intentionally shared (for now)
+- Flagged that local dev and the deployed app point at the *same* `ghostwall` maincloud db — anything drawn while testing locally is real, public, and permanent (subject to the wall's own TTL/ghost rules). Offered to split into a local SpacetimeDB server for dev + maincloud for prod, or a second `ghostwall-dev` maincloud db.
+- **Decision: leave it as-is.** Single-user testing right now, not worth the setup overhead yet. Revisit if/when more people start testing against it.
+- Not yet done: connection-state UI (`connecting`/`disconnected`/`connected` — the backend already exposes `subscribeState` for this, nothing renders it).
+
+#### Grid dots: added, tuned, then removed
+- Tried replacing the grid-line background texture with a subtle dot grid (Figma/Excalidraw-editor feel → wanted something lighter, more "infinite space" than "document").
+- First pass was invisible (opacity/radius tuned too subtle — verified via pixel-level canvas inspection, not just eyeballing).
+- Second pass had a real bug: dots were computed in **screen space**, but `gridLayer` inherits the stage's pan/zoom transform like every other layer (same as marks, which use world coordinates via `(pointer - stage.xy) / scale`). Result: dots only painted in whatever quadrant the current pan offset happened to land in, not the whole canvas.
+- Fixed the math (world-space placement), confirmed full coverage via pixel scan — then design call: **dots looked bad over the drawings, removed entirely.** `drawGrid()` is now a no-op; background stays the lifted `#111111` (up from `#0a0a0a`) from the same design pass.
+
+---
+
+## V1.2 — "Place, not an editor"
 
 User feedback drive (V1.2).Reduce the tool feeling → the wall should feel like a place you draw on, not an editor. Everything else (auth, backend, payments, profiles, comments, marketplace, more tools) stays deferred. The real validation is now 5–10 people using it unassisted and watching the five signals — especially "do they come back?".
 
@@ -159,12 +191,17 @@ Goals (in priority order):
 | `src/main.ts` | Hash router: `#/wall`, `#/w?id=<objectId>`, `#/landing` (default) |
 | `src/canvas.ts` | Konva engine: stage, layers, pan/zoom, tools, Transformer, undo/redo, grid, **ghost lifecycle** (`ghostUntil`, `fadeOpacity`, `animateExpiredObjects`), teleports, `drawRef` helpers |
 | `src/wall.ts` | Wall page: toolbar (**Draw·Text·Erase·React** + More), top-bar, redesigned `.oi-*` popup, 🎲 discover FAB + reveal, **quick-react palette**, `maybeShowDrawHint`, profile panel, onboarding, share/copy-link |
-| `src/seed.ts` | One-time seeded content (marker `thewall_seed_v2`, key-based `place()`, narrative cast) |
-| `src/storage.ts` | In-memory-first persistence: `localStore` object + load/save helpers (localStorage optional) |
+| `src/seed.ts` | Seeded content: `buildSeedObjects()` (33-piece narrative cast) + `buildSeedPayloads()` for the server `seedObjects` reducer. `seedWallIfNeeded()` (client/localStorage seeding) only runs when `!isSpacetime()` |
+| `src/storage.ts` | `StorageBackend` interface + `LocalStorageBackend` implementation + `activeBackend` module state (`setBackend`/`getBackend`/`isSpacetime`) + convenience helpers that delegate to whichever backend is active |
+| `src/spacetime.ts` | `SpacetimeBackend` — the active backend. Connects to SpacetimeDB, subscribes to tables, converts rows ↔ `WallObject`, calls reducers for every mutation, reconnects with backoff |
+| `src/module_bindings/` | Generated by `spacetime generate` from `spacetimedb/src/index.ts` — tables, reducers, types. Regenerate after any server schema change |
+| `src/map.ts` | `objectDataToWallData` / `wallToObjectData` — converts between the server's generic `ObjectData` and the client's typed `WallObject.data` per object type |
+| `spacetimedb/src/index.ts` | The server module (tables + reducers), published as `ghostwall` on SpacetimeDB maincloud |
+| `spacetime.json` / `spacetime.local.json` | CLI config: server (`maincloud`) + module path, and the published database name (`ghostwall`) |
 | `src/landing.ts` | Landing page |
 | `src/types.ts` | `WallObject`, `UserProfile`, `DURATION_MS` (24h/7d) |
 | `src/utils.ts` | id/time/format helpers |
-| `src/style.css` | All styling (dark theme) |
+| `src/style.css` | All styling (dark theme, `--bg: #111111`) |
 | `devlog.md` | This doc |
 
 ### WallObject shape
@@ -177,18 +214,20 @@ Goals (in priority order):
 }
 ```
 
-### Persistence philosophy (repeated per decision)
-> V1 is **in-memory-first**. localStorage is an optional convenience so a user can refresh and keep their own local wall. The product must NOT depend on persistence working across devices/users. No accounts, no sync, no Supabase/Firebase. Backend work is deferred until the core loop is proven.
+### Persistence philosophy (superseded by V2)
+> V1 was **in-memory-first**: localStorage-only, no accounts, no sync, no cross-device truth. As of V2, `SpacetimeBackend` (`src/spacetime.ts`) is the active backend (`storage.ts`'s `activeBackend`) — objects/reactions/comments live server-side on the shared `ghostwall` maincloud db and stream to every client via subscriptions. `LocalStorageBackend` still exists and implements the same `StorageBackend` interface, but nothing currently activates it.
 
 ### Routing / share links
-- `#/w?id=<id>` deep-links to an object: engine `teleportToObjectId(id)` centers + selects it when the object exists locally.
+- `#/w?id=<id>` deep-links to an object: engine `teleportToObjectId(id)` centers + selects it when the object exists.
 - `explore=true` param opens the discovery panel.
-- True cross-device sharing is deferred (a link only works when the object is available locally).
+- Cross-device sharing now works for real (shared backend) as long as the linked object hasn't expired/faded server-side.
 
 ---
 
 ## Explicitly deferred (do NOT build yet)
-Supabase/Firebase, real-time WebSockets, authentication, profiles beyond a local username, payments, "keep forever" purchases, marketplace, complex comments, moderation infrastructure, notifications.
+Authentication (beyond SpacetimeDB's anonymous per-browser identity), profiles beyond a local username, payments, "keep forever" purchases, marketplace, moderation infrastructure, notifications, dev/prod database split (see V2 log — intentional, single shared db for now).
+
+~~Supabase/Firebase, real-time WebSockets~~ — superseded: the wall now runs on SpacetimeDB (see V2).
 
 ---
 
@@ -196,4 +235,9 @@ Supabase/Firebase, real-time WebSockets, authentication, profiles beyond a local
 - [x] Onboarding overlay: "Welcome to Ghostwall. Everything you leave here fades after 24 hours…" + Start exploring (marker `thewall_seen_intro`)
 - [x] Share link button in object info popup (copy `#/w?id=…`)
 - [x] Storage reframe comment cleanup (in-memory-first language)
-- [ ] Ship V1.2 live, then *actually use it for a few days* and watch for the signals (did I press Random? did I draw a second thing? did I modify someone's drawing? did I come back? did I want to send a link?)
+- [x] SpacetimeDB backend published + wired end-to-end (V2, see above)
+- [ ] Commit + push the V2 changes (currently uncommitted: `main.ts`, `wall.ts`, `canvas.ts`, `storage.ts`, `seed.ts`, `spacetime.ts`, `map.ts`, `module_bindings/`, `spacetimedb/`, `spacetime.json`) — nothing is live on Vercel/GitHub yet, this has only been running locally against the real maincloud db
+- [ ] Connection-state UI — `subscribeState` exists on the backend, nothing renders `connecting`/`disconnected` to the user right now
+- [ ] Empty-canvas-at-zoom-out problem — flagged during a design pass: at low zoom the wall is ~95% dead void, seed content clusters too tightly. Not yet fixed (seed placement spread + optional glow layer around dense clusters)
+- [ ] Dev/prod database split — deliberately deferred (single-user testing right now); revisit once more people test against the live wall
+- [ ] Ship V2 live, then *actually use it for a few days* and watch for the signals (did I press Random? did I draw a second thing? did I modify someone's drawing? did I come back? did I want to send a link?) — now meaningfully testable since marks persist across devices/sessions

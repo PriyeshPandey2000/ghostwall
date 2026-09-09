@@ -1,6 +1,12 @@
 import './style.css';
 import { renderLanding } from './landing';
 import { renderWall } from './wall';
+import { setBackend } from './storage';
+import { createSpacetimeBackend } from './spacetime';
+
+const backend = createSpacetimeBackend('wss://maincloud.spacetimedb.com', 'ghostwall');
+setBackend(backend);
+backend.start();
 
 const app = document.getElementById('app')!;
 

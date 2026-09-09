@@ -1,6 +1,6 @@
 import { CanvasEngine } from './canvas';
 import { seedWallIfNeeded } from './seed';
-import { loadUserProfile, saveUserProfile, updateObject } from './storage';
+import { isSpacetime, loadUserProfile, saveUserProfile, subscribeObjects, updateObject } from './storage';
 import { formatTimeAgo, formatTimeLeft, getRandomUsername } from './utils';
 import type { WallObject } from './types';
 
@@ -72,7 +72,9 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
 
   const canvasEl = document.getElementById('canvas-container') as HTMLDivElement;
   const userProfile = loadUserProfile() || createDefaultProfile();
-  seedWallIfNeeded();
+  // The Spacetime backend seeds server-side (see spacetime.ts's maybeSeed());
+  // local seeding is only for the single-user localStorage backend.
+  if (!isSpacetime()) seedWallIfNeeded();
 
   const engine = new CanvasEngine({
     container: canvasEl,
@@ -83,6 +85,10 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     onObjectSelected: (obj) => handleObjectSelected(obj),
     onToolChange: () => {},
   });
+
+  if (isSpacetime()) {
+    subscribeObjects((objects) => engine.syncObjects(objects));
+  }
 
   updateProfileDisplay(userProfile);
 

@@ -1,123 +1,259 @@
 import type { WallObject, UserProfile } from './types';
 
 /**
- * Persistence is a convenience, not a dependency.
+ * Persistence backend abstraction.
  *
- * The source of truth for a session is the in-memory state held by the canvas
- * engine. localStorage here is OPTIONAL — it lets the same user refresh and
- * keep their own local wall. The product must work fine even if it's in
- * private mode, quota is full, or the store is cleared.
+ * The canvas and UI never touch storage directly — they go through these
+ * facades. Two implementations exist:
  *
- * There is NO account, cloud sync, or backend today. This file just wraps
- * localStorage in tiny helpers so callers don't touch the store directly.
+ *  - LocalStorageBackend: the original single-user store (objects, profile,
+ *    viewport all in localStorage). Source of truth = this browser.
+ *  - SpacetimeBackend      : a shared SpacetimeDB wall. Objects/reacts/comments
+ *    live server-side and stream in via subscriptions; the profile lives in the
+ *    `user` table; only the viewport stays in localStorage.
+ *
+ * The active backend is chosen at boot (see activate* below) and swapped in as
+ * the module's default export-facing functions are re-pointed to it.
  */
-interface LocalStore {
+
+export type ConnectionState = 'local' | 'connecting' | 'connected' | 'disconnected';
+
+export interface StorageBackend {
+  readonly kind: 'local' | 'spacetime';
+  start(): void;
   loadObjects(): WallObject[];
   saveObjects(objects: WallObject[]): void;
+  addObject(obj: WallObject): void;
+  removeObject(id: string): void;
+  updateObject(id: string, updates: Partial<WallObject>): void;
   loadUserProfile(): UserProfile | null;
   saveUserProfile(profile: UserProfile): void;
   loadViewport(): { x: number; y: number; zoom: number } | null;
   saveViewport(viewport: { x: number; y: number; zoom: number }): void;
+  react(objectId: string, emoji: string): void;
+  unreact(objectId: string, emoji: string): void;
+  comment(objectId: string, text: string): void;
+  drawOver(objectId: string): void;
+  onObjectsChanged(cb: (objects: WallObject[]) => void): void;
+  onStateChanged(cb: (state: ConnectionState, detail?: string) => void): void;
+  onProfileChanged(cb: (profile: UserProfile) => void): void;
 }
 
 const OBJECTS_KEY = 'thewall_objects';
 const USER_KEY = 'thewall_user';
 const VIEWPORT_KEY = 'thewall_viewport';
 
-const localStore: LocalStore = {
+function readJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJSON(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* quota / private mode — best effort only */
+  }
+}
+
+export class LocalStorageBackend implements StorageBackend {
+  readonly kind = 'local' as const;
+  private objectCbs = new Set<(objects: WallObject[]) => void>();
+  private stateCbs = new Set<(state: ConnectionState, detail?: string) => void>();
+  private profileCbs = new Set<(profile: UserProfile) => void>();
+
+  start(): void {
+    this.stateCbs.forEach(cb => cb('local'));
+  }
+
   loadObjects(): WallObject[] {
-    try {
-      const raw = localStorage.getItem(OBJECTS_KEY);
-      return raw ? (JSON.parse(raw) as WallObject[]) : [];
-    } catch {
-      return [];
-    }
-  },
+    return readJSON<WallObject[]>(OBJECTS_KEY, []);
+  }
 
   saveObjects(objects: WallObject[]): void {
-    try {
-      localStorage.setItem(OBJECTS_KEY, JSON.stringify(objects));
-    } catch {
-      /* quota / private mode — best effort only */
+    writeJSON(OBJECTS_KEY, objects);
+    this.objectCbs.forEach(cb => cb(objects));
+  }
+
+  addObject(obj: WallObject): void {
+    const objects = this.loadObjects();
+    objects.push(obj);
+    this.saveObjects(objects);
+  }
+
+  removeObject(id: string): void {
+    this.saveObjects(this.loadObjects().filter(o => o.id !== id));
+  }
+
+  updateObject(id: string, updates: Partial<WallObject>): void {
+    const objects = this.loadObjects();
+    const idx = objects.findIndex(o => o.id === id);
+    if (idx >= 0) {
+      objects[idx] = { ...objects[idx], ...updates };
+      this.saveObjects(objects);
     }
-  },
+  }
 
   loadUserProfile(): UserProfile | null {
-    try {
-      const raw = localStorage.getItem(USER_KEY);
-      return raw ? (JSON.parse(raw) as UserProfile) : null;
-    } catch {
-      return null;
-    }
-  },
+    return readJSON<UserProfile | null>(USER_KEY, null);
+  }
 
   saveUserProfile(profile: UserProfile): void {
-    try {
-      localStorage.setItem(USER_KEY, JSON.stringify(profile));
-    } catch {
-      /* best effort */
-    }
-  },
+    writeJSON(USER_KEY, profile);
+    this.profileCbs.forEach(cb => cb(profile));
+  }
 
   loadViewport(): { x: number; y: number; zoom: number } | null {
-    try {
-      const raw = localStorage.getItem(VIEWPORT_KEY);
-      return raw ? (JSON.parse(raw) as { x: number; y: number; zoom: number }) : null;
-    } catch {
-      return null;
-    }
-  },
+    return readJSON(VIEWPORT_KEY, null);
+  }
 
   saveViewport(viewport: { x: number; y: number; zoom: number }): void {
-    try {
-      localStorage.setItem(VIEWPORT_KEY, JSON.stringify(viewport));
-    } catch {
-      /* best effort */
-    }
-  },
-};
+    writeJSON(VIEWPORT_KEY, viewport);
+  }
 
-// ---- Convenience helpers used across the app (delegate to localStore) ----
+  react(objectId: string, emoji: string): void {
+    const objects = this.loadObjects();
+    const obj = objects.find(o => o.id === objectId);
+    if (!obj) return;
+    const reactions = [...obj.reactions];
+    const existing = reactions.find(r => r.emoji === emoji);
+    if (existing) {
+      existing.count += 1;
+      existing.user = this.loadUserProfile()?.username || existing.user;
+    } else {
+      reactions.push({ emoji, user: this.loadUserProfile()?.username || 'guest', count: 1 });
+    }
+    this.updateObject(objectId, { reactions });
+  }
+
+  unreact(objectId: string, emoji: string): void {
+    const objects = this.loadObjects();
+    const obj = objects.find(o => o.id === objectId);
+    if (!obj) return;
+    const reactions = [...obj.reactions];
+    const existing = reactions.find(r => r.emoji === emoji);
+    if (existing) {
+      existing.count = Math.max(0, existing.count - 1);
+      if (existing.count === 0) {
+        const idx = reactions.findIndex(r => r.emoji === emoji);
+        reactions.splice(idx, 1);
+      }
+    }
+    this.updateObject(objectId, { reactions });
+  }
+
+  comment(objectId: string, text: string): void {
+    const objects = this.loadObjects();
+    const obj = objects.find(o => o.id === objectId);
+    if (!obj) return;
+    const profile = this.loadUserProfile();
+    const comments = [...(obj.comments || []), { user: profile?.username || 'guest', text, createdAt: Date.now() }];
+    this.updateObject(objectId, { comments });
+  }
+
+  drawOver(objectId: string): void {
+    const objects = this.loadObjects();
+    const obj = objects.find(o => o.id === objectId);
+    if (!obj) return;
+    const profile = this.loadUserProfile();
+    if (profile && !obj.modifiedBy.includes(profile.username)) {
+      this.updateObject(objectId, { modifiedBy: [...obj.modifiedBy, profile.username] });
+    }
+  }
+
+  onObjectsChanged(cb: (objects: WallObject[]) => void): void {
+    this.objectCbs.add(cb);
+  }
+
+  onStateChanged(cb: (state: ConnectionState, detail?: string) => void): void {
+    this.stateCbs.add(cb);
+  }
+
+  onProfileChanged(cb: (profile: UserProfile) => void): void {
+    this.profileCbs.add(cb);
+  }
+}
+
+let activeBackend: StorageBackend = new LocalStorageBackend();
+
+export function setBackend(backend: StorageBackend): void {
+  activeBackend = backend;
+}
+
+export function getBackend(): StorageBackend {
+  return activeBackend;
+}
+
+export function isSpacetime(): boolean {
+  return activeBackend.kind === 'spacetime';
+}
+
+// ---- Convenience helpers used across the app (delegate to active backend) ----
 
 export function loadObjects(): WallObject[] {
-  return localStore.loadObjects();
+  return activeBackend.loadObjects();
 }
 
 export function saveObjects(objects: WallObject[]): void {
-  localStore.saveObjects(objects);
-}
-
-export function loadUserProfile(): UserProfile | null {
-  return localStore.loadUserProfile();
-}
-
-export function saveUserProfile(profile: UserProfile): void {
-  localStore.saveUserProfile(profile);
-}
-
-export function loadViewport(): { x: number; y: number; zoom: number } | null {
-  return localStore.loadViewport();
-}
-
-export function saveViewport(viewport: { x: number; y: number; zoom: number }): void {
-  localStore.saveViewport(viewport);
-}
-
-export function removeObject(id: string): void {
-  localStore.saveObjects(localStore.loadObjects().filter(o => o.id !== id));
+  activeBackend.saveObjects(objects);
 }
 
 export function addObject(obj: WallObject): void {
-  const objects = localStore.loadObjects();
-  objects.push(obj);
-  localStore.saveObjects(objects);
+  activeBackend.addObject(obj);
+}
+
+export function removeObject(id: string): void {
+  activeBackend.removeObject(id);
 }
 
 export function updateObject(id: string, updates: Partial<WallObject>): void {
-  const objects = localStore.loadObjects();
-  const idx = objects.findIndex(o => o.id === id);
-  if (idx >= 0) {
-    objects[idx] = { ...objects[idx], ...updates };
-    localStore.saveObjects(objects);
-  }
+  activeBackend.updateObject(id, updates);
+}
+
+export function addReaction(objectId: string, emoji: string): void {
+  activeBackend.react(objectId, emoji);
+}
+
+export function removeReaction(objectId: string, emoji: string): void {
+  activeBackend.unreact(objectId, emoji);
+}
+
+export function addComment(objectId: string, text: string): void {
+  activeBackend.comment(objectId, text);
+}
+
+export function drawOverObject(objectId: string): void {
+  activeBackend.drawOver(objectId);
+}
+
+export function loadUserProfile(): UserProfile | null {
+  return activeBackend.loadUserProfile();
+}
+
+export function saveUserProfile(profile: UserProfile): void {
+  activeBackend.saveUserProfile(profile);
+}
+
+export function loadViewport(): { x: number; y: number; zoom: number } | null {
+  return activeBackend.loadViewport();
+}
+
+export function saveViewport(viewport: { x: number; y: number; zoom: number }): void {
+  activeBackend.saveViewport(viewport);
+}
+
+export function subscribeObjects(cb: (objects: WallObject[]) => void): void {
+  activeBackend.onObjectsChanged(cb);
+}
+
+export function subscribeState(cb: (state: ConnectionState, detail?: string) => void): void {
+  activeBackend.onStateChanged(cb);
+}
+
+export function subscribeProfile(cb: (profile: UserProfile) => void): void {
+  activeBackend.onProfileChanged(cb);
 }

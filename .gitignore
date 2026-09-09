@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# SpacetimeDB local config (per-machine database name)
+spacetime.local.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

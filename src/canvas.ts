@@ -1,7 +1,7 @@
 import Konva from 'konva';
 import { getStroke } from 'perfect-freehand';
 import { generateId } from './utils';
-import { loadObjects, saveObjects, addObject, loadUserProfile } from './storage';
+import { loadObjects, saveObjects, addObject, removeObject, updateObject, loadUserProfile } from './storage';
 import type { WallObject } from './types';
 import { DURATION_MS, GHOST_MS } from './types';
 
@@ -212,12 +212,7 @@ export class CanvasEngine {
     if (!obj) return;
     const merged = { ...obj, ...updates };
     Object.assign(obj, merged);
-    const stored = loadObjects();
-    const idx = stored.findIndex(o => o.id === id);
-    if (idx >= 0) {
-      stored[idx] = merged;
-      saveObjects(stored);
-    }
+    updateObject(id, merged);
   }
 
   private setupEvents(): void {
@@ -504,7 +499,7 @@ export class CanvasEngine {
         this.konvaObjects.delete(obj.id);
         this.boundNodeMap.delete(node);
         this.objects.splice(i, 1);
-        saveObjects(loadObjects().filter(o => o.id !== obj.id));
+        removeObject(obj.id);
         break;
       }
     }
@@ -792,27 +787,6 @@ export class CanvasEngine {
 
   private drawGrid(): void {
     this.gridLayer.destroyChildren();
-    const scale = this.stage.scaleX();
-    const gridSize = 40 * scale;
-    const width = this.stage.width();
-    const height = this.stage.height();
-    const offsetX = this.stage.x() % gridSize;
-    const offsetY = this.stage.y() % gridSize;
-
-    for (let x = offsetX; x < width; x += gridSize) {
-      this.gridLayer.add(new Konva.Line({
-        points: [x, 0, x, height],
-        stroke: 'rgba(255,255,255,0.03)',
-        strokeWidth: 1,
-      }));
-    }
-    for (let y = offsetY; y < height; y += gridSize) {
-      this.gridLayer.add(new Konva.Line({
-        points: [0, y, width, y],
-        stroke: 'rgba(255,255,255,0.03)',
-        strokeWidth: 1,
-      }));
-    }
     this.gridLayer.batchDraw();
   }
 
@@ -951,6 +925,90 @@ export class CanvasEngine {
       this.boundNodeMap.set(node, obj);
       this.makeObjectsDraggable(node, obj);
     }
+  }
+
+  /**
+   * Merge a fresh object list from the active backend into the live canvas.
+   * Used by the shared (Spacetime) backend to stream remote creates/moves/
+   * deletes; safe to call repeatedly. Never touches the undo stack.
+   */
+  syncObjects(remote: WallObject[]): void {
+    const selected = this.selectedObjectId;
+    const remoteIds = new Set(remote.map(o => o.id));
+
+    // Remove nodes for objects that no longer exist remotely.
+    for (const id of [...this.konvaObjects.keys()]) {
+      if (!remoteIds.has(id)) {
+        const node = this.konvaObjects.get(id);
+        if (node) {
+          node.destroy();
+          this.konvaObjects.delete(id);
+          this.boundNodeMap.delete(node);
+        }
+      }
+    }
+
+    this.objects = remote;
+
+    for (const obj of remote) {
+      const existing = this.konvaObjects.get(obj.id);
+      if (existing) {
+        // Cheap in-place update; re-render only if the shape fundamentally changed.
+        if (!this.syncExistingNode(existing, obj)) {
+          existing.destroy();
+          this.konvaObjects.delete(obj.id);
+          this.renderObject(obj);
+        }
+      } else {
+        this.renderObject(obj);
+      }
+    }
+
+    if (selected && this.konvaObjects.has(selected)) {
+      this.selectedObjectId = selected;
+      const selNode = this.konvaObjects.get(selected);
+      if (selNode && selNode instanceof Konva.Shape) {
+        this.transformer.nodes([selNode as Konva.Shape]);
+      }
+    }
+    this.mainLayer.add(this.transformer);
+    this.mainLayer.batchDraw();
+  }
+
+  /** Update a live node's position/rotation/content from a changed WallObject. */
+  private syncExistingNode(node: Konva.Node, obj: WallObject): boolean {
+    const prev = this.boundNodeMap.get(node);
+    if (prev && prev.type !== obj.type) return false;
+
+    if (node instanceof Konva.Image) {
+      const prevSrc = prev ? (prev.data as { src?: string }).src : undefined;
+      const nextSrc = (obj.data as { src?: string }).src;
+      if (nextSrc !== undefined && prevSrc !== nextSrc) return false;
+      node.x(obj.x);
+      node.y(obj.y);
+      const rotation = (obj.data as { rotation?: number }).rotation;
+      if (typeof rotation === 'number') node.rotation(rotation);
+      const idata = obj.data as { width?: number; height?: number };
+      if (typeof idata.width === 'number') node.width(idata.width);
+      if (typeof idata.height === 'number') node.height(idata.height);
+      this.boundNodeMap.set(node, obj);
+      return true;
+    }
+
+    node.x(obj.x);
+    node.y(obj.y);
+    const rotation = (obj.data as { rotation?: number }).rotation;
+    if (typeof rotation === 'number') node.rotation(rotation);
+    if (node instanceof Konva.Text) {
+      const td = obj.data as { text?: string };
+      if (td.text !== undefined && node.text() !== td.text) node.text(td.text);
+    }
+    if (!obj.keptForever && obj.expiresAt) {
+      const fade = this.fadeOpacity(obj);
+      if (Math.abs(node.opacity() - fade) > 0.02) node.opacity(fade);
+    }
+    this.boundNodeMap.set(node, obj);
+    return true;
   }
 
   /**
@@ -1138,8 +1196,9 @@ export class CanvasEngine {
     const node = this.konvaObjects.get(this.selectedObjectId);
     if (node) node.destroy();
     this.konvaObjects.delete(this.selectedObjectId);
-    this.objects = this.objects.filter(o => o.id !== this.selectedObjectId);
-    saveObjects(this.objects);
+    const removedId = this.selectedObjectId;
+    this.objects = this.objects.filter(o => o.id !== removedId);
+    removeObject(removedId);
     this.deselectAll();
     this.options.onObjectSelected?.(null);
   }
@@ -1209,9 +1268,7 @@ export class CanvasEngine {
     this.konvaObjects.set(id, konvaImg as unknown as Konva.Node);
     this.boundNodeMap.set(konvaImg as unknown as Konva.Node, wallObj);
     this.makeObjectsDraggable(konvaImg as unknown as Konva.Node, wallObj);
-    const all = loadObjects();
-    all.push(wallObj);
-    saveObjects(all);
+    addObject(wallObj);
     this.objects.push(wallObj);
   }
 
