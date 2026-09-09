@@ -8,9 +8,10 @@ import type {
   Reaction as ReactionRow,
   SeedPayload,
   User as UserRow,
+  WallStats as WallStatsRow,
 } from './module_bindings/types';
 import { objectDataToWallData, wallToObjectData } from './map';
-import type { ConnectionState, StorageBackend } from './storage';
+import type { ConnectionState, StorageBackend, WallLiveStats } from './storage';
 import type { UserProfile, WallObject, Reaction } from './types';
 import type { Timestamp } from 'spacetimedb';
 
@@ -66,6 +67,7 @@ export class SpacetimeBackend implements StorageBackend {
   private comments = new Map<string, CommentRow[]>();
   private history = new Map<string, ObjectHistoryRow[]>();
   private usersById = new Map<string, UserRow>();
+  private wallStatsRow: WallStatsRow | null = null;
 
   private objs = new Map<string, WallObject>();
   private pendingAdds = new Set<string>();
@@ -81,6 +83,7 @@ export class SpacetimeBackend implements StorageBackend {
   private objectCbs = new Set<(objects: WallObject[]) => void>();
   private stateCbs = new Set<(state: ConnectionState, detail?: string) => void>();
   private profileCbs = new Set<(profile: UserProfile) => void>();
+  private statsCbs = new Set<(stats: WallLiveStats) => void>();
 
   constructor(uri: string, db: string) {
     this.uri = uri;
@@ -211,6 +214,15 @@ export class SpacetimeBackend implements StorageBackend {
       this.usersById.delete(row.identity.toHexString());
       this.scheduleSync();
     });
+
+    db.wallStats.onInsert((_ctx, row) => {
+      this.wallStatsRow = row;
+      this.scheduleSync();
+    });
+    db.wallStats.onUpdate((_ctx, _old, row) => {
+      this.wallStatsRow = row;
+      this.scheduleSync();
+    });
   }
 
   private pushRow<T extends { id: bigint }>(map: Map<string, T[]>, key: string, row: T): void {
@@ -283,7 +295,7 @@ export class SpacetimeBackend implements StorageBackend {
         this.baseApplied = true;
         this.maybeSeed();
       })
-      .subscribe([tables.user, tables.reaction, tables.comment, tables.objectHistory]);
+      .subscribe([tables.user, tables.reaction, tables.comment, tables.objectHistory, tables.wallStats]);
   }
 
   private subscribeCanvas(conn: DbConnection): void {
@@ -401,6 +413,24 @@ export class SpacetimeBackend implements StorageBackend {
     }
   }
 
+  private computeStats(): WallLiveStats {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let onlineNow = 0;
+    let visitorsToday = 0;
+    for (const row of this.usersById.values()) {
+      if (row.online) onlineNow++;
+      if (now - microsToMs(row.lastSeen) < dayMs) visitorsToday++;
+    }
+    return {
+      marksLeft: Number(this.wallStatsRow?.currentCount ?? 0n),
+      keptForever: Number(this.wallStatsRow?.keptForeverCount ?? 0n),
+      disappeared: Number(this.wallStatsRow?.totalExpired ?? 0n),
+      onlineNow,
+      visitorsToday,
+    };
+  }
+
   private scheduleSync(): void {
     if (this.syncTimer) return;
     this.syncTimer = setTimeout(() => {
@@ -408,6 +438,8 @@ export class SpacetimeBackend implements StorageBackend {
       this.recompute();
       const objects = [...this.objs.values()].sort((a, b) => a.createdAt - b.createdAt);
       this.objectCbs.forEach(cb => cb(objects));
+      const stats = this.computeStats();
+      this.statsCbs.forEach(cb => cb(stats));
     }, 40);
   }
 
@@ -664,6 +696,10 @@ export class SpacetimeBackend implements StorageBackend {
 
   onProfileChanged(cb: (profile: UserProfile) => void): void {
     this.profileCbs.add(cb);
+  }
+
+  onStatsChanged(cb: (stats: WallLiveStats) => void): void {
+    this.statsCbs.add(cb);
   }
 }
 

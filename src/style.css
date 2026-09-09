@@ -638,6 +638,28 @@ html, body {
   border-radius: 8px;
 }
 
+.online-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 6px 10px;
+  background: rgba(20, 20, 20, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ecdc4;
+  box-shadow: 0 0 6px #4ecdc4;
+}
+
 /* OBJECT HOVER / INFO */
 .object-info-popup {
   position: fixed;

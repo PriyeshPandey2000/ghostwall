@@ -18,6 +18,15 @@ import type { WallObject, UserProfile } from './types';
 
 export type ConnectionState = 'local' | 'connecting' | 'connected' | 'disconnected';
 
+/** Wall-wide live figures — only the shared (Spacetime) backend has real data for these. */
+export interface WallLiveStats {
+  marksLeft: number;
+  onlineNow: number;
+  visitorsToday: number;
+  keptForever: number;
+  disappeared: number;
+}
+
 export interface StorageBackend {
   readonly kind: 'local' | 'spacetime';
   start(): void;
@@ -37,6 +46,8 @@ export interface StorageBackend {
   onObjectsChanged(cb: (objects: WallObject[]) => void): void;
   onStateChanged(cb: (state: ConnectionState, detail?: string) => void): void;
   onProfileChanged(cb: (profile: UserProfile) => void): void;
+  /** Only implemented by backends with real shared data (Spacetime). */
+  onStatsChanged?(cb: (stats: WallLiveStats) => void): void;
 }
 
 const OBJECTS_KEY = 'thewall_objects';
@@ -256,4 +267,9 @@ export function subscribeState(cb: (state: ConnectionState, detail?: string) => 
 
 export function subscribeProfile(cb: (profile: UserProfile) => void): void {
   activeBackend.onProfileChanged(cb);
+}
+
+/** No-op on backends without real shared data (e.g. LocalStorageBackend). */
+export function subscribeStats(cb: (stats: WallLiveStats) => void): void {
+  activeBackend.onStatsChanged?.(cb);
 }

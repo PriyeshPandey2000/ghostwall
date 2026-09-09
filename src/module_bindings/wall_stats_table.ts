@@ -11,11 +11,8 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  identity: __t.identity().primaryKey(),
-  username: __t.string(),
-  avatar: __t.string(),
-  bio: __t.string(),
-  createdAt: __t.timestamp().name("created_at"),
-  lastSeen: __t.timestamp().name("last_seen"),
-  online: __t.bool(),
+  id: __t.u32().primaryKey(),
+  totalExpired: __t.u64().name("total_expired"),
+  currentCount: __t.u64().name("current_count"),
+  keptForeverCount: __t.u64().name("kept_forever_count"),
 });

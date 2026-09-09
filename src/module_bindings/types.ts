@@ -141,6 +141,15 @@ export const User = __t.object("User", {
   bio: __t.string(),
   createdAt: __t.timestamp(),
   lastSeen: __t.timestamp(),
+  online: __t.bool(),
 });
 export type User = __Infer<typeof User>;
+
+export const WallStats = __t.object("WallStats", {
+  id: __t.u32(),
+  totalExpired: __t.u64(),
+  currentCount: __t.u64(),
+  keptForeverCount: __t.u64(),
+});
+export type WallStats = __Infer<typeof WallStats>;
 

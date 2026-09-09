@@ -1,6 +1,6 @@
 import { CanvasEngine } from './canvas';
 import { seedWallIfNeeded } from './seed';
-import { isSpacetime, loadUserProfile, saveUserProfile, subscribeObjects, updateObject } from './storage';
+import { isSpacetime, loadUserProfile, saveUserProfile, subscribeObjects, subscribeStats, updateObject } from './storage';
 import { formatTimeAgo, formatTimeLeft, getRandomUsername } from './utils';
 import type { WallObject } from './types';
 
@@ -41,6 +41,9 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
           <button class="top-btn" id="btn-profile">👤 <span id="profile-name">Enter username</span></button>
         </div>
         <div class="top-bar-right">
+          <div class="online-indicator" id="online-indicator" style="display:none">
+            <span class="online-dot"></span><span id="online-count">0</span> online
+          </div>
           <div class="zoom-indicator" id="zoom-indicator">100%</div>
           <button class="top-btn accent" id="btn-explore">🔭 Explore</button>
         </div>
@@ -88,6 +91,12 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
 
   if (isSpacetime()) {
     subscribeObjects((objects) => engine.syncObjects(objects));
+    subscribeStats((stats) => {
+      const wrap = document.getElementById('online-indicator');
+      const countEl = document.getElementById('online-count');
+      if (wrap) wrap.style.display = '';
+      if (countEl) countEl.textContent = String(stats.onlineNow);
+    });
   }
 
   updateProfileDisplay(userProfile);

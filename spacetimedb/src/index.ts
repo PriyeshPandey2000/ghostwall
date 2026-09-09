@@ -49,6 +49,23 @@ const user = table(
     bio: t.string(),
     createdAt: t.timestamp(),
     lastSeen: t.timestamp(),
+    online: t.bool().default(false),
+  }
+);
+
+// Wall-wide counters for the landing page. A client's canvas_object cache is
+// range-limited to whatever's near its viewport (see subscribeCanvas on the
+// client), so "marks on the wall" / "kept forever" can't be derived from a
+// local row count — and "disappeared forever" can't be derived at all once
+// rows are deleted. These are maintained transactionally by the reducers
+// that create/remove objects.
+const wall_stats = table(
+  { name: 'wall_stats', public: true },
+  {
+    id: t.u32().primaryKey(),
+    totalExpired: t.u64(),
+    currentCount: t.u64().default(0n),
+    keptForeverCount: t.u64().default(0n),
   }
 );
 
@@ -142,6 +159,7 @@ const spacetimedb = schema({
   object_history,
   seed_state,
   object_expiry,
+  wall_stats,
 });
 export default spacetimedb;
 
@@ -161,6 +179,7 @@ function ensureUser(ctx: Ctx, identity: Identity) {
     bio: '',
     createdAt: ctx.timestamp,
     lastSeen: ctx.timestamp,
+    online: false,
   });
 }
 
@@ -197,6 +216,8 @@ function unscheduleExpiry(ctx: Ctx, objectId: string) {
 }
 
 function deleteObjectById(ctx: Ctx, id: string) {
+  const obj = ctx.db.canvas_object.id.find(id);
+  bumpRemoved(ctx, obj?.keptForever ?? false);
   for (const h of [...ctx.db.object_history.iter()].filter((r) => r.objectId === id)) {
     ctx.db.object_history.id.delete(h.id);
   }
@@ -212,16 +233,67 @@ function deleteObjectById(ctx: Ctx, id: string) {
   ctx.db.canvas_object.id.delete(id);
 }
 
+// currentCount/keptForeverCount track the WHOLE wall — a client's canvas_object
+// cache is range-limited to its viewport (see subscribeCanvas in spacetime.ts),
+// so counting local rows would undercount these on the landing page.
+function bumpCreated(ctx: Ctx, keptForever: boolean) {
+  const existing = ctx.db.wall_stats.id.find(1);
+  if (existing) {
+    ctx.db.wall_stats.id.update({
+      ...existing,
+      currentCount: existing.currentCount + 1n,
+      keptForeverCount: existing.keptForeverCount + (keptForever ? 1n : 0n),
+    });
+  } else {
+    ctx.db.wall_stats.insert({
+      id: 1,
+      totalExpired: 0n,
+      currentCount: 1n,
+      keptForeverCount: keptForever ? 1n : 0n,
+    });
+  }
+}
+
+function bumpKeptForeverDelta(ctx: Ctx, delta: 1n | -1n) {
+  const existing = ctx.db.wall_stats.id.find(1);
+  if (!existing) return;
+  const next = existing.keptForeverCount + delta;
+  ctx.db.wall_stats.id.update({ ...existing, keptForeverCount: next > 0n ? next : 0n });
+}
+
+function bumpRemoved(ctx: Ctx, keptForever: boolean) {
+  const existing = ctx.db.wall_stats.id.find(1);
+  if (existing) {
+    ctx.db.wall_stats.id.update({
+      ...existing,
+      totalExpired: existing.totalExpired + 1n,
+      currentCount: existing.currentCount > 0n ? existing.currentCount - 1n : 0n,
+      keptForeverCount:
+        keptForever && existing.keptForeverCount > 0n
+          ? existing.keptForeverCount - 1n
+          : existing.keptForeverCount,
+    });
+  } else {
+    ctx.db.wall_stats.insert({ id: 1, totalExpired: 1n, currentCount: 0n, keptForeverCount: 0n });
+  }
+}
+
 export const init = spacetimedb.init((_ctx) => {});
 
 export const onConnect = spacetimedb.clientConnected((ctx) => {
   ensureUser(ctx, ctx.sender);
+  const row = ctx.db.user.identity.find(ctx.sender);
+  if (row) ctx.db.user.identity.update({ ...row, online: true, lastSeen: ctx.timestamp });
 });
 
+// One Identity can hold multiple connections (e.g. two tabs); closing one
+// tab flips online=false even if another tab of the same identity is still
+// open. Acceptable for a per-browser anonymous identity model — a stray
+// re-open picks the count back up within a few seconds via onConnect.
 export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
   const existing = ctx.db.user.identity.find(ctx.sender);
   if (existing) {
-    ctx.db.user.identity.update({ ...existing, lastSeen: ctx.timestamp });
+    ctx.db.user.identity.update({ ...existing, online: false, lastSeen: ctx.timestamp });
   }
 });
 
@@ -281,6 +353,7 @@ export const seedObjects = spacetimedb.reducer(
         authorName: seed.authorName,
         parentId: seed.parentId,
       });
+      bumpCreated(ctx, keptForever);
     }
   }
 );
@@ -332,6 +405,7 @@ export const createObject = spacetimedb.reducer(
       authorName: undefined,
       parentId: args.parentId,
     });
+    bumpCreated(ctx, keptForever);
     if (!keptForever) {
       scheduleExpiry(ctx, args.id, created.microsSinceUnixEpoch + ttl + GHOST_MICROS);
     }
@@ -419,6 +493,9 @@ export const updateObject = spacetimedb.reducer(
 
     ctx.db.canvas_object.id.update(next);
 
+    if (wasForever !== nextForever) {
+      bumpKeptForeverDelta(ctx, nextForever ? 1n : -1n);
+    }
     if (wasForever && !nextForever) {
       scheduleExpiry(ctx, obj.id, next.ghostUntil!.microsSinceUnixEpoch);
     }
@@ -516,6 +593,7 @@ export const setUsername = spacetimedb.reducer(
       bio: bio ?? existing?.bio ?? '',
       createdAt: existing?.createdAt ?? ctx.timestamp,
       lastSeen: ctx.timestamp,
+      online: existing?.online ?? true,
     };
     if (existing) {
       ctx.db.user.identity.update(row);
@@ -524,6 +602,22 @@ export const setUsername = spacetimedb.reducer(
     }
   }
 );
+
+// Recomputes wall_stats.currentCount/keptForeverCount from the actual
+// canvas_object rows. Not called by anything client-side — a manual escape
+// hatch (`spacetime call ghostwall recomputeWallStats`) for the day these
+// counters drift from reality, and to backfill after adding the columns.
+export const recomputeWallStats = spacetimedb.reducer((ctx) => {
+  const rows = [...ctx.db.canvas_object.iter()];
+  const currentCount = BigInt(rows.length);
+  const keptForeverCount = BigInt(rows.filter((r) => r.keptForever).length);
+  const existing = ctx.db.wall_stats.id.find(1);
+  if (existing) {
+    ctx.db.wall_stats.id.update({ ...existing, currentCount, keptForeverCount });
+  } else {
+    ctx.db.wall_stats.insert({ id: 1, totalExpired: 0n, currentCount, keptForeverCount });
+  }
+});
 
 export const expireObject = spacetimedb.reducer(
   { timer: object_expiry.rowType },

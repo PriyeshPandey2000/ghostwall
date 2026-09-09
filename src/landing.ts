@@ -1,3 +1,4 @@
+import { subscribeStats } from './storage';
 import { formatCount } from './utils';
 
 const PREVIEW_GRAFFITI = [
@@ -34,13 +35,6 @@ const NOTIFICATIONS = [
   'a time capsule just opened',
 ];
 
-interface Stats {
-  marksLeft: number;
-  visitorsToday: number;
-  disappeared: number;
-  kept: number;
-}
-
 function animateNumber(el: HTMLElement, target: number, duration: number = 2000): void {
   const start = 0;
   const startTime = performance.now();
@@ -58,13 +52,6 @@ function animateNumber(el: HTMLElement, target: number, duration: number = 2000)
 }
 
 export function renderLanding(container: HTMLElement): void {
-  const stats: Stats = {
-    marksLeft: 18391,
-    visitorsToday: 4821,
-    disappeared: 12843,
-    kept: 2190,
-  };
-
   container.innerHTML = `
     <div class="landing">
       <nav class="landing-nav">
@@ -133,18 +120,26 @@ export function renderLanding(container: HTMLElement): void {
     </div>
   `;
 
-  // Animate stats
-  setTimeout(() => {
+  // Real live figures from the shared wall (no-op if not on the Spacetime backend).
+  let statsAnimated = false;
+  subscribeStats((stats) => {
     const marksEl = document.getElementById('stat-marks');
     const visitorsEl = document.getElementById('stat-visitors');
     const disappearedEl = document.getElementById('stat-disappeared');
     const keptEl = document.getElementById('stat-kept');
-
-    if (marksEl) animateNumber(marksEl, stats.marksLeft);
-    if (visitorsEl) animateNumber(visitorsEl, stats.visitorsToday);
-    if (disappearedEl) animateNumber(disappearedEl, stats.disappeared);
-    if (keptEl) animateNumber(keptEl, stats.kept);
-  }, 500);
+    const targets: [HTMLElement | null, number][] = [
+      [marksEl, stats.marksLeft],
+      [visitorsEl, stats.visitorsToday],
+      [disappearedEl, stats.disappeared],
+      [keptEl, stats.keptForever],
+    ];
+    for (const [el, value] of targets) {
+      if (!el) continue;
+      if (!statsAnimated) animateNumber(el, value);
+      else el.textContent = formatCount(value);
+    }
+    statsAnimated = true;
+  });
 
   // Cycle notifications
   let notifIdx = 0;

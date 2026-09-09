@@ -39,6 +39,7 @@ import AddReactionReducer from "./add_reaction_reducer";
 import CreateObjectReducer from "./create_object_reducer";
 import DeleteObjectReducer from "./delete_object_reducer";
 import DrawOverReducer from "./draw_over_reducer";
+import RecomputeWallStatsReducer from "./recompute_wall_stats_reducer";
 import RemoveReactionReducer from "./remove_reaction_reducer";
 import SeedObjectsReducer from "./seed_objects_reducer";
 import SetUsernameReducer from "./set_username_reducer";
@@ -52,6 +53,7 @@ import CommentRow from "./comment_table";
 import ObjectHistoryRow from "./object_history_table";
 import ReactionRow from "./reaction_table";
 import UserRow from "./user_table";
+import WallStatsRow from "./wall_stats_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -129,6 +131,17 @@ const tablesSchema = __schema({
       { name: 'user_username_key', constraint: 'unique', columns: ['username'] },
     ],
   }, UserRow),
+  wallStats: __table({
+    name: 'wall_stats',
+    indexes: [
+      { accessor: 'id', name: 'wall_stats_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'wall_stats_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WallStatsRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -138,6 +151,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_object", CreateObjectReducer),
   __reducerSchema("delete_object", DeleteObjectReducer),
   __reducerSchema("draw_over", DrawOverReducer),
+  __reducerSchema("recompute_wall_stats", RecomputeWallStatsReducer),
   __reducerSchema("remove_reaction", RemoveReactionReducer),
   __reducerSchema("seed_objects", SeedObjectsReducer),
   __reducerSchema("set_username", SetUsernameReducer),
@@ -154,6 +168,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "canvas_object": Omit<typeof tablesSchema.schemaType.tables["canvasObject"], "accessorName"> & { readonly accessorName: "canvas_object" };
     /** @deprecated Use `objectHistory` instead. This alias will be removed in the next major version. */
     readonly "object_history": Omit<typeof tablesSchema.schemaType.tables["objectHistory"], "accessorName"> & { readonly accessorName: "object_history" };
+    /** @deprecated Use `wallStats` instead. This alias will be removed in the next major version. */
+    readonly "wall_stats": Omit<typeof tablesSchema.schemaType.tables["wallStats"], "accessorName"> & { readonly accessorName: "wall_stats" };
   };
 };
 
@@ -174,6 +190,7 @@ const REMOTE_MODULE = {
 const tableAccessorAliases = {
   "canvas_object": "canvasObject",
   "object_history": "objectHistory",
+  "wall_stats": "wallStats",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -198,6 +215,8 @@ export type DbView = __DbViewBase & {
   readonly "canvas_object": __DbViewBase["canvasObject"];
   /** @deprecated Use `objectHistory` instead. This alias will be removed in the next major version. */
   readonly "object_history": __DbViewBase["objectHistory"];
+  /** @deprecated Use `wallStats` instead. This alias will be removed in the next major version. */
+  readonly "wall_stats": __DbViewBase["wallStats"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
@@ -206,6 +225,8 @@ export type Tables = __TablesBase & {
   readonly "canvas_object": __TablesBase["canvasObject"];
   /** @deprecated Use `objectHistory` instead. This alias will be removed in the next major version. */
   readonly "object_history": __TablesBase["objectHistory"];
+  /** @deprecated Use `wallStats` instead. This alias will be removed in the next major version. */
+  readonly "wall_stats": __TablesBase["wallStats"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */
