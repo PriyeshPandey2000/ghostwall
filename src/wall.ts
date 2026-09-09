@@ -6,17 +6,22 @@ import type { WallObject } from './types';
 
 type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule';
 
-const TOOLS: { id: Tool; icon: string; label: string }[] = [
+// Primary tools shown in the main toolbar. The rest hide under "More" so the
+// first experience stays instantly understandable.
+const PRIMARY_TOOLS: { id: Tool; icon: string; label: string }[] = [
   { id: 'select', icon: '🖱️', label: 'Select' },
   { id: 'draw', icon: '✏️', label: 'Draw' },
   { id: 'erase', icon: '🧽', label: 'Erase' },
   { id: 'text', icon: 'Aa', label: 'Text' },
-  { id: 'rect', icon: '▭', label: 'Rectangle' },
-  { id: 'circle', icon: '◯', label: 'Circle' },
   { id: 'sticker', icon: '🎨', label: 'Sticker' },
-  { id: 'image', icon: '🖼️', label: 'Image' },
-  { id: 'secret', icon: '🤫', label: 'Secret' },
-  { id: 'timecapsule', icon: '🔒', label: 'Time capsule' },
+];
+
+const MORE_TOOLS: { id: Tool; icon: string; label: string; hint: string }[] = [
+  { id: 'rect', icon: '▭', label: 'Rectangle', hint: 'outline shape' },
+  { id: 'circle', icon: '◯', label: 'Circle', hint: 'outline shape' },
+  { id: 'image', icon: '🖼️', label: 'Image', hint: 'upload a picture' },
+  { id: 'secret', icon: '🤫', label: 'Secret', hint: 'hide a message, reveal to click' },
+  { id: 'timecapsule', icon: '🔒', label: 'Time capsule', hint: 'locked until a date' },
 ];
 
 const COLORS = [
@@ -45,11 +50,24 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       </div>
 
       <div class="toolbar" id="toolbar">
-        ${TOOLS.map(t => `
+        ${PRIMARY_TOOLS.map(t => `
           <button class="tool-btn ${t.id === 'select' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
             <span>${t.icon}</span>
           </button>
         `).join('')}
+        <div class="toolbar-divider"></div>
+        <div class="more-tools" id="more-tools">
+          <button class="tool-btn" id="btn-more" data-tooltip="More tools">➕</button>
+          <div class="more-tools-panel" id="more-tools-panel">
+            ${MORE_TOOLS.map(t => `
+              <button class="more-tool-btn" data-tool="${t.id}">
+                <span class="more-tool-icon">${t.icon}</span>
+                <span class="more-tool-label">${t.label}</span>
+                <span class="more-tool-hint">${t.hint}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
         <div class="toolbar-divider"></div>
         <div class="color-picker-wrapper" id="color-picker">
           <div class="color-swatch" id="color-swatch" style="background:${COLORS[0]}"></div>
@@ -85,6 +103,8 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   setupTopBar(engine, userProfile);
   setupKeyboard(engine);
 
+  maybeShowOnboarding();
+
   // Handle deep links
   if (initial.deepLink) {
     if (!engine.teleportToObjectId(initial.deepLink)) {
@@ -115,17 +135,36 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   }
 
   function setupToolbar(engineRef: CanvasEngine, _profile: typeof userProfile): void {
-    const buttons = document.querySelectorAll('.tool-btn[data-tool]');
-    buttons.forEach(btn => {
+    const allToolButtons = document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn');
+    const morePanel = document.getElementById('more-tools-panel');
+    const moreBtn = document.getElementById('btn-more');
+
+    moreBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      morePanel?.classList.toggle('open');
+    });
+    // Close the More menu when clicking anywhere else
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('more-tools');
+      if (wrap && !wrap.contains(e.target as Node)) morePanel?.classList.remove('open');
+    });
+
+    allToolButtons.forEach(btn => {
       btn.addEventListener('click', () => {
         const tool = (btn as HTMLElement).dataset.tool as Tool;
         if (tool === 'image') {
+          // image uses a file picker rather than a simple tool switch
+          document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
+          (btn as HTMLElement).classList.add('active');
+          engineRef.setTool('image');
+          morePanel?.classList.remove('open');
           handleImageUpload();
           return;
         }
-        buttons.forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
         (btn as HTMLElement).classList.add('active');
         engineRef.setTool(tool);
+        morePanel?.classList.remove('open');
       });
     });
 
@@ -169,12 +208,80 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   function setupTopBar(engineRef: CanvasEngine, profile: typeof userProfile): void {
     document.getElementById('btn-profile')?.addEventListener('click', () => openProfilePanel(engineRef, profile));
     document.getElementById('btn-explore')?.addEventListener('click', openDiscoveryPanel);
-    document.getElementById('btn-random')?.addEventListener('click', () => {
-      const result = engineRef.teleportRandom();
-      if (result.found && result.obj) showDiscoveryMessage(
-        `You discovered something from ${formatTimeAgo(result.obj.createdAt)}`
-      );
+    document.getElementById('btn-random')?.addEventListener('click', () => doWeirdDiscovery(engineRef));
+  }
+
+  /**
+   * "Take me somewhere weird" — jump to an interesting mark and show a rich
+   * reveal card (what it is, who left it, how long ago, how many people changed
+   * it). This is the exploration hook that makes the wall feel alive.
+   */
+  function doWeirdDiscovery(engineRef: CanvasEngine): void {
+    const all = engineRef.getObjects();
+    if (all.length === 0) {
+      showDiscoveryMessage('nothing here yet... go make the first mark');
+      return;
+    }
+
+    // Score marks: mysteries, hearts/drawings, permanents, and things people
+    // already interacted with rank highest — the "wait, what is this?" finds.
+    const scored = all.map(o => {
+      let s = Math.random();
+      if (o.type === 'secret' || o.type === 'timecapsule') s += 6;
+      if (o.type === 'sticker') s += 2;
+      if (o.keptForever) s += 2.5;
+      if ((o.reactions || []).some(r => r.count > 0)) s += 2;
+      if ((o.modifiedBy || []).length > 0) s += 3;
+      return { o, s };
+    }).sort((a, b) => b.s - a.s);
+
+    const pick = scored[0].o;
+    const node = engineRef.getMainLayer().getChildren().find(c => c.id() === pick.id);
+    if (!node) { engineRef.teleportRandom(); return; }
+    const rect = node.getClientRect();
+    engineRef.teleportTo(rect.x + rect.width / 2, rect.y + rect.height / 2, 1.3);
+
+    showDiscoveryReveal(pick);
+  }
+
+  function showDiscoveryReveal(obj: WallObject): void {
+    closePanels();
+    const existing = document.querySelector('.discovery-reveal');
+    if (existing) existing.remove();
+
+    const modifiedCount = (obj.modifiedBy || []).length;
+    const reactedCount = (obj.reactions || []).reduce((sum, r) => sum + (r.count || 0), 0);
+
+    const reveal = document.createElement('div');
+    reveal.className = 'discovery-reveal';
+    reveal.innerHTML = `
+      <div class="dr-find">📍 You found something left ${formatTimeAgo(obj.createdAt)}</div>
+      <div class="dr-body">
+        <div class="dr-line">${getObjPreview(obj)}</div>
+        <div class="dr-author">${obj.type === 'sticker' ? (String(obj.data.emoji) || '') + ' ' : ''}@${obj.author} was here</div>
+        <div class="dr-stats">
+          ${modifiedCount > 0 ? `<span>↑ modified by ${modifiedCount} person${modifiedCount > 1 ? 's' : ''}</span>` : ''}
+          ${reactedCount > 0 ? `<span>❤️ × ${reactedCount}</span>` : ''}
+        </div>
+      </div>
+      <div class="dr-actions">
+        <button class="dr-go" id="dr-go">Go there</button>
+        <button class="dr-skip" id="dr-skip">Keep wandering</button>
+      </div>
+    `;
+    document.body.appendChild(reveal);
+
+    const close = () => reveal.remove();
+    reveal.querySelector('#dr-go')?.addEventListener('click', () => {
+      close();
+      engine.selectObjectId(obj.id);
     });
+    reveal.querySelector('#dr-skip')?.addEventListener('click', () => {
+      close();
+      doWeirdDiscovery(engine);
+    });
+    // Swallow clicks so a stray tap doesn't deselect
+    reveal.addEventListener('click', (e) => { e.stopPropagation(); });
   }
 
   function setupKeyboard(engineRef: CanvasEngine): void {
@@ -259,23 +366,9 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       engineRef.teleportTo(x, y, zoom);
       showDiscoveryMessage('exploring nearby...');
     } else if (action.includes('random')) {
-      const result = engineRef.teleportRandom();
-      if (result.found && result.obj) {
-        showDiscoveryMessage(
-          `You discovered something left ${formatTimeAgo(result.obj.createdAt)}`
-        );
-      } else {
-        showDiscoveryMessage('nothing here yet... go make the first mark');
-      }
+      doWeirdDiscovery(engineRef);
     } else if (action.includes('weird')) {
-      const weird = engineRef.getObjects().filter(o => ['secret', 'timecapsule'].includes(o.type) || o.type === 'sticker');
-      if (weird.length > 0) {
-        const obj = weird[Math.floor(Math.random() * weird.length)];
-        engineRef.teleportToObjectId(obj.id);
-        showDiscoveryMessage('you found something weird 👁️');
-      } else {
-        showDiscoveryMessage('no weird things yet... create one');
-      }
+      doWeirdDiscovery(engineRef);
     } else if (action.includes('Search')) {
       showUsernameSearch(engineRef);
     }
@@ -357,6 +450,25 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     overlay.querySelector('#explore-cta')?.addEventListener('click', () => {
       overlay.remove();
       openDiscoveryPanel();
+    });
+  }
+
+  function maybeShowOnboarding(): void {
+    if (localStorage.getItem('thewall_seen_intro')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal onboarding-modal">
+        <div class="ob-title">Welcome to Ghostwall.</div>
+        <p class="ob-line">Everything you leave here fades after 24 hours.</p>
+        <p class="ob-line">Find something. Change it. Leave something of your own.</p>
+        <button class="modal-close" id="start-exploring">Start exploring →</button>
+      </div>
+    `;
+    container.appendChild(overlay);
+    overlay.querySelector('#start-exploring')?.addEventListener('click', () => {
+      localStorage.setItem('thewall_seen_intro', '1');
+      overlay.remove();
     });
   }
 
@@ -448,6 +560,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
         `).join('')}
         <button class="object-action-btn" id="btn-draw-over">✏️ draw over</button>
         <button class="object-action-btn" id="btn-comment">💬</button>
+        <button class="object-action-btn" id="btn-share">🔗</button>
         ${obj.id === findMyObject() ? `<button class="object-action-btn" id="btn-delete" style="color:var(--accent)">🗑️</button>` : ''}
       </div>
     `;
@@ -494,6 +607,20 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
 
     popup.querySelector('#btn-comment')?.addEventListener('click', () => {
       openComments(obj);
+    });
+
+    popup.querySelector('#btn-share')?.addEventListener('click', () => {
+      const url = `${location.origin}${location.pathname}#/w?id=${obj.id}`;
+      const copyText = (): void => {
+        showDiscoveryMessage('🔗 link copied');
+      };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(copyText).catch(() => {
+          prompt('Copy this link to share this mark:', url);
+        });
+      } else {
+        prompt('Copy this link to share this mark:', url);
+      }
     });
 
     popup.querySelector('#btn-delete')?.addEventListener('click', () => {

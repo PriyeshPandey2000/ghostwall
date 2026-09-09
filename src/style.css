@@ -450,6 +450,77 @@ html, body {
   margin: 0 8px;
 }
 
+.more-tools {
+  position: relative;
+}
+
+.more-tools-panel {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 220px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, transform 0.15s;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.more-tools-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.more-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.more-tool-btn:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.more-tool-btn.active {
+  background: rgba(255,77,77,0.15);
+}
+
+.more-tool-icon {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+}
+
+.more-tool-label {
+  font-size: 13px;
+  font-family: var(--font);
+  flex: 1;
+}
+
+.more-tool-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
 .tool-btn {
   width: 40px;
   height: 40px;
@@ -839,6 +910,35 @@ html, body {
   background: var(--accent-hover);
 }
 
+/* ONBOARDING */
+.onboarding-modal {
+  text-align: center;
+  background: rgba(14, 14, 14, 0.98);
+}
+
+.ob-title {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 18px;
+  background: linear-gradient(90deg, var(--accent), #ff8a8a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.ob-line {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin: 4px 0;
+}
+
+.onboarding-modal .modal-close {
+  margin-top: 24px;
+  max-width: 260px;
+}
+
 /* DISCOVERY PANEL */
 .discovery-panel {
   position: fixed;
@@ -886,6 +986,101 @@ html, body {
 
 .discovery-btn .emoji {
   font-size: 16px;
+}
+
+/* WEIRD DISCOVERY REVEAL CARD */
+.discovery-reveal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(400px, calc(100vw - 32px));
+  background: rgba(18, 18, 18, 0.97);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px;
+  z-index: 400;
+  box-shadow: 0 20px 80px rgba(0,0,0,0.7);
+  animation: popIn 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.dr-find {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 12px;
+  letter-spacing: 0.3px;
+}
+
+.dr-body {
+  border: 1px dashed rgba(255,255,255,0.15);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: rgba(255,255,255,0.02);
+}
+
+.dr-line {
+  font-size: 16px;
+  font-family: var(--font);
+  color: var(--text);
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+
+.dr-author {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
+.dr-stats {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.dr-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.dr-go {
+  flex: 1;
+  padding: 11px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dr-go:hover { background: var(--accent-hover); }
+
+.dr-skip {
+  flex: 1;
+  padding: 11px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dr-skip:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+
+@keyframes popIn {
+  from { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
 .discovery-msg {

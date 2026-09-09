@@ -114,8 +114,11 @@ export class CanvasEngine {
       this.stage.scale({ x: vp.zoom, y: vp.zoom });
       this.stage.position({ x: vp.x, y: vp.y });
     } else {
+      // Center the world origin so first-time visitors land right in the
+      // middle of the lived-in cluster (the smiley face at ~0,0) instead of
+      // a corner full of empty grid.
       this.stage.scale({ x: 1, y: 1 });
-      this.stage.position({ x: 0, y: 0 });
+      this.stage.position({ x: this.stage.width() / 2, y: this.stage.height() / 2 });
     }
 
     // Initial tool is 'select', so the stage is draggable to pan the infinite
@@ -764,6 +767,14 @@ export class CanvasEngine {
     this.transformer.nodes([]);
     this.uiLayer.batchDraw();
     this.selectedObjectId = null;
+  }
+
+  /** Select a mark by id and surface it via onObjectSelected (e.g. to open its info popup). */
+  selectObjectId(id: string): void {
+    const wallObj = this.objects.find(o => o.id === id);
+    if (!wallObj) return;
+    this.selectObject(id);
+    this.options.onObjectSelected?.(wallObj);
   }
 
   private drawGrid(): void {
