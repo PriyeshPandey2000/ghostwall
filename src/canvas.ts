@@ -118,7 +118,22 @@ export class CanvasEngine {
       this.stage.position({ x: 0, y: 0 });
     }
 
-    this.stage.on('dragend', () => this.saveViewport());
+    // Initial tool is 'select', so the stage is draggable to pan the infinite
+    // canvas by dragging empty space. setTool() toggles this for drawing tools.
+    this.stage.draggable(true);
+    this.stage.container().style.cursor = 'grab';
+
+    this.stage.on('dragstart', () => {
+      if (this.currentTool === 'select') this.stage.container().style.cursor = 'grabbing';
+    });
+    this.stage.on('dragmove', () => {
+      this.drawGrid();
+      this.options.onZoomChange?.(this.stage.scaleX());
+    });
+    this.stage.on('dragend', () => {
+      if (this.currentTool === 'select') this.stage.container().style.cursor = 'grab';
+      this.saveViewport();
+    });
     this.stage.on('wheel', (e) => {
       e.evt.preventDefault();
       const oldScale = this.stage.scaleX();
@@ -1028,6 +1043,9 @@ export class CanvasEngine {
 
   setTool(tool: Tool): void {
     this.currentTool = tool;
+    // In select mode the stage itself is draggable so the user can pan the
+    // infinite canvas by dragging empty space (drag on a piece moves that piece).
+    this.stage.draggable(tool === 'select');
     this.stage.container().style.cursor = this.getCursorForTool(tool);
     if (tool !== 'select') this.deselectAll();
     this.options.onToolChange?.(tool);
@@ -1046,7 +1064,7 @@ export class CanvasEngine {
       case 'draw': return 'crosshair';
       case 'erase': return 'cell';
       case 'text': return 'text';
-      case 'select': return 'default';
+      case 'select': return 'grab';
       default: return 'crosshair';
     }
   }
