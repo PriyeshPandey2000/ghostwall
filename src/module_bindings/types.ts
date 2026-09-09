@@ -44,6 +44,14 @@ export const Comment = __t.object("Comment", {
 });
 export type Comment = __Infer<typeof Comment>;
 
+export const Cursor = __t.object("Cursor", {
+  identity: __t.identity(),
+  x: __t.i32(),
+  y: __t.i32(),
+  updatedAt: __t.timestamp(),
+});
+export type Cursor = __Infer<typeof Cursor>;
+
 export const ObjectData = __t.object("ObjectData", {
   pathData: __t.option(__t.string()),
   color: __t.option(__t.string()),
@@ -142,6 +150,8 @@ export const User = __t.object("User", {
   createdAt: __t.timestamp(),
   lastSeen: __t.timestamp(),
   online: __t.bool(),
+  homeX: __t.option(__t.i32()),
+  homeY: __t.option(__t.i32()),
 });
 export type User = __Infer<typeof User>;
 

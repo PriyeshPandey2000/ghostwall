@@ -3,6 +3,7 @@ import type { SubscriptionHandle } from './module_bindings';
 import type {
   CanvasObject,
   Comment as CommentRow,
+  Cursor as CursorRow,
   ObjectHistory as ObjectHistoryRow,
   ObjectPatch,
   Reaction as ReactionRow,
@@ -11,7 +12,7 @@ import type {
   WallStats as WallStatsRow,
 } from './module_bindings/types';
 import { objectDataToWallData, wallToObjectData } from './map';
-import type { ConnectionState, StorageBackend, WallLiveStats } from './storage';
+import type { ConnectionState, LiveCursor, StorageBackend, WallLiveStats } from './storage';
 import type { UserProfile, WallObject, Reaction } from './types';
 import type { Timestamp } from 'spacetimedb';
 
@@ -68,6 +69,7 @@ export class SpacetimeBackend implements StorageBackend {
   private history = new Map<string, ObjectHistoryRow[]>();
   private usersById = new Map<string, UserRow>();
   private wallStatsRow: WallStatsRow | null = null;
+  private cursorsById = new Map<string, CursorRow>();
 
   private objs = new Map<string, WallObject>();
   private pendingAdds = new Set<string>();
@@ -80,10 +82,12 @@ export class SpacetimeBackend implements StorageBackend {
   private seededSent = false;
 
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
   private objectCbs = new Set<(objects: WallObject[]) => void>();
   private stateCbs = new Set<(state: ConnectionState, detail?: string) => void>();
   private profileCbs = new Set<(profile: UserProfile) => void>();
   private statsCbs = new Set<(stats: WallLiveStats) => void>();
+  private cursorCbs = new Set<(cursors: LiveCursor[]) => void>();
 
   constructor(uri: string, db: string) {
     this.uri = uri;
@@ -223,6 +227,19 @@ export class SpacetimeBackend implements StorageBackend {
       this.wallStatsRow = row;
       this.scheduleSync();
     });
+
+    db.cursor.onInsert((_ctx, row) => {
+      this.cursorsById.set(row.identity.toHexString(), row);
+      this.scheduleCursorSync();
+    });
+    db.cursor.onUpdate((_ctx, _old, row) => {
+      this.cursorsById.set(row.identity.toHexString(), row);
+      this.scheduleCursorSync();
+    });
+    db.cursor.onDelete((_ctx, row) => {
+      this.cursorsById.delete(row.identity.toHexString());
+      this.scheduleCursorSync();
+    });
   }
 
   private pushRow<T extends { id: bigint }>(map: Map<string, T[]>, key: string, row: T): void {
@@ -295,7 +312,7 @@ export class SpacetimeBackend implements StorageBackend {
         this.baseApplied = true;
         this.maybeSeed();
       })
-      .subscribe([tables.user, tables.reaction, tables.comment, tables.objectHistory, tables.wallStats]);
+      .subscribe([tables.user, tables.reaction, tables.comment, tables.objectHistory, tables.wallStats, tables.cursor]);
   }
 
   private subscribeCanvas(conn: DbConnection): void {
@@ -441,6 +458,33 @@ export class SpacetimeBackend implements StorageBackend {
       const stats = this.computeStats();
       this.statsCbs.forEach(cb => cb(stats));
     }, 40);
+  }
+
+  private computeCursors(): LiveCursor[] {
+    const cursors: LiveCursor[] = [];
+    for (const [id, row] of this.cursorsById) {
+      if (id === this.myIdentityHex) continue;
+      const user = this.usersById.get(id);
+      cursors.push({
+        id,
+        x: row.x,
+        y: row.y,
+        username: user?.username ?? 'guest',
+        avatar: user?.avatar ?? '👻',
+      });
+    }
+    return cursors;
+  }
+
+  // Decoupled from scheduleSync's 40ms debounce: cursor moves happen far more
+  // often than object/stat changes and shouldn't force a full object recompute.
+  private scheduleCursorSync(): void {
+    if (this.cursorSyncTimer) return;
+    this.cursorSyncTimer = setTimeout(() => {
+      this.cursorSyncTimer = null;
+      const cursors = this.computeCursors();
+      this.cursorCbs.forEach(cb => cb(cursors));
+    }, 60);
   }
 
   // ---- StorageBackend interface ----
@@ -700,6 +744,35 @@ export class SpacetimeBackend implements StorageBackend {
 
   onStatsChanged(cb: (stats: WallLiveStats) => void): void {
     this.statsCbs.add(cb);
+  }
+
+  sendCursor(x: number, y: number): void {
+    if (!this.conn) return;
+    try {
+      void this.conn.reducers.updateCursor({ x: Math.round(x), y: Math.round(y) }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+
+  onCursorsChanged(cb: (cursors: LiveCursor[]) => void): void {
+    this.cursorCbs.add(cb);
+  }
+
+  setHome(x: number, y: number): void {
+    if (!this.conn) return;
+    try {
+      void this.conn.reducers.setHome({ x: Math.round(x), y: Math.round(y) }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+
+  getMyHome(): { x: number; y: number } | null {
+    if (!this.myIdentityHex) return null;
+    const row = this.usersById.get(this.myIdentityHex);
+    if (!row || row.homeX == null || row.homeY == null) return null;
+    return { x: row.homeX, y: row.homeY };
   }
 }
 

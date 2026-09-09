@@ -14,7 +14,9 @@ import DrawOverReducer from "../draw_over_reducer";
 import RecomputeWallStatsReducer from "../recompute_wall_stats_reducer";
 import RemoveReactionReducer from "../remove_reaction_reducer";
 import SeedObjectsReducer from "../seed_objects_reducer";
+import SetHomeReducer from "../set_home_reducer";
 import SetUsernameReducer from "../set_username_reducer";
+import UpdateCursorReducer from "../update_cursor_reducer";
 import UpdateObjectReducer from "../update_object_reducer";
 
 export type AddCommentParams = __Infer<typeof AddCommentReducer>;
@@ -25,6 +27,8 @@ export type DrawOverParams = __Infer<typeof DrawOverReducer>;
 export type RecomputeWallStatsParams = __Infer<typeof RecomputeWallStatsReducer>;
 export type RemoveReactionParams = __Infer<typeof RemoveReactionReducer>;
 export type SeedObjectsParams = __Infer<typeof SeedObjectsReducer>;
+export type SetHomeParams = __Infer<typeof SetHomeReducer>;
 export type SetUsernameParams = __Infer<typeof SetUsernameReducer>;
+export type UpdateCursorParams = __Infer<typeof UpdateCursorReducer>;
 export type UpdateObjectParams = __Infer<typeof UpdateObjectReducer>;
 

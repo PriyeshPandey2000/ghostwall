@@ -224,6 +224,29 @@ Goals (in priority order):
 
 ---
 
+## V3 — presence: live cursors, home pin, real online/landing stats
+
+A product pass ranked "what will make people come back", by impact: (1) real presence/stats — done first, see V2's stats work above; (2) an in-app "someone drew nearby" toast; (3) live cursors on the canvas; (4) a lightweight home pin. Two items had a scope fork the user chose explicitly: **in-app toast, not OS push** (no permission prompt/service worker/VAPID infra), and **a home pin, not a claim/defend territory system** (no ownership mechanic).
+
+#### Live cursors
+- New `cursor` table (server): one row per connected identity, upserted on every move, deleted on disconnect so stale cursors never linger. Deliberately not an append-only log — a mouse position has no history value, so it's a bounded (O(concurrent users)) live-presence table, same pattern as `wall_stats`.
+- `updateCursor({x,y})` reducer. Client throttles to one call per 120ms (`canvas.ts`'s new always-on `onCursorMove` — separate from the existing gesture-only `handlePointerMove`, so hovering broadcasts position even without drawing).
+- `CanvasEngine.renderRemoteCursors()` diffs against previous nodes (no destroy/recreate churn), colors each cursor by a deterministic hash of their identity, labels it `avatar username`.
+- Verified: client→server persistence confirmed live (a real browser session's cursor row appeared and stayed correct via `spacetime sql`). Cross-*identity* rendering (does user A see user B's cursor) couldn't be visually verified in this session — the test tooling's multiple tabs share one browser profile/localStorage, so they resolve to the same SpacetimeDB identity, not two distinct ones. The code path mirrors the already-proven `wallStats`/`user` subscription pattern; flagging as unverified-live rather than claiming false confidence.
+
+#### Home pin
+- `user.homeX`/`homeY` (optional i32 columns, additive migration). `setHome({x,y})` reducer.
+- Top-bar `🏠` button: no home set → "Set home here" (saves current camera center); home set → "Go home" (calls the existing `CanvasEngine.teleportTo`, no new engine method needed).
+- Verified end-to-end live: set at camera (0,0), confirmed server-side via `spacetime sql`, panned away, clicked again, camera animated back to the saved point.
+
+#### "Someone drew nearby" toast
+- Reuses `subscribeObjects`' existing diff — skips the first (initial-load) callback, then on later inserts, toasts via the existing `showDiscoveryMessage` helper if the mark's author isn't you and it landed within 3000 world-units of the camera center at the moment it arrived. No new schema, no new UI component.
+
+#### Not built (explicitly out of scope, see product-fork above)
+Real OS-level push notifications (needs Notification permission UX, a service worker, and a push-signing server — reducers can't sign/send push themselves). Claim/defend territory (an actual game-design mechanic — claim size, contest/loss rules — not a UI add-on).
+
+---
+
 ## Explicitly deferred (do NOT build yet)
 Authentication (beyond SpacetimeDB's anonymous per-browser identity), profiles beyond a local username, payments, "keep forever" purchases, marketplace, moderation infrastructure, notifications, dev/prod database split (see V2 log — intentional, single shared db for now).
 
@@ -241,3 +264,6 @@ Authentication (beyond SpacetimeDB's anonymous per-browser identity), profiles b
 - [ ] Empty-canvas-at-zoom-out problem — flagged during a design pass: at low zoom the wall is ~95% dead void, seed content clusters too tightly. Not yet fixed (seed placement spread + optional glow layer around dense clusters)
 - [ ] Dev/prod database split — deliberately deferred (single-user testing right now); revisit once more people test against the live wall
 - [ ] Ship V2 live, then *actually use it for a few days* and watch for the signals (did I press Random? did I draw a second thing? did I modify someone's drawing? did I come back? did I want to send a link?) — now meaningfully testable since marks persist across devices/sessions
+- [x] Live cursors, home pin, "someone drew nearby" toast (V3, see above)
+- [ ] Cross-identity verification of live cursor rendering — couldn't be tested with two real distinct identities in this session (tooling limitation, see V3 note); worth a manual two-device check before relying on it
+- [ ] Named/ownable spaces beyond the home pin (claim/defend territory) — explicitly descoped this round, needs its own game-design pass first

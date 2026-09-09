@@ -50,6 +50,23 @@ const user = table(
     createdAt: t.timestamp(),
     lastSeen: t.timestamp(),
     online: t.bool().default(false),
+    // A user's single saved spot ("Set home here" / "Find my corner").
+    homeX: t.option(t.i32()).default(undefined),
+    homeY: t.option(t.i32()).default(undefined),
+  }
+);
+
+// One row per connected user, upserted on every cursor move. Ephemeral —
+// there's no history/persistence value in a mouse position, so this is a
+// ceiling-bounded (O(concurrent users)) live-presence table, not an
+// append-only log. Row is deleted on disconnect so stale cursors don't linger.
+const cursor = table(
+  { name: 'cursor', public: true },
+  {
+    identity: t.identity().primaryKey(),
+    x: t.i32(),
+    y: t.i32(),
+    updatedAt: t.timestamp(),
   }
 );
 
@@ -160,6 +177,7 @@ const spacetimedb = schema({
   seed_state,
   object_expiry,
   wall_stats,
+  cursor,
 });
 export default spacetimedb;
 
@@ -180,6 +198,8 @@ function ensureUser(ctx: Ctx, identity: Identity) {
     createdAt: ctx.timestamp,
     lastSeen: ctx.timestamp,
     online: false,
+    homeX: undefined,
+    homeY: undefined,
   });
 }
 
@@ -295,7 +315,31 @@ export const onDisconnect = spacetimedb.clientDisconnected((ctx) => {
   if (existing) {
     ctx.db.user.identity.update({ ...existing, online: false, lastSeen: ctx.timestamp });
   }
+  if (ctx.db.cursor.identity.find(ctx.sender)) {
+    ctx.db.cursor.identity.delete(ctx.sender);
+  }
 });
+
+export const updateCursor = spacetimedb.reducer(
+  { x: t.i32(), y: t.i32() },
+  (ctx, { x, y }) => {
+    const existing = ctx.db.cursor.identity.find(ctx.sender);
+    if (existing) {
+      ctx.db.cursor.identity.update({ ...existing, x, y, updatedAt: ctx.timestamp });
+    } else {
+      ctx.db.cursor.insert({ identity: ctx.sender, x, y, updatedAt: ctx.timestamp });
+    }
+  }
+);
+
+export const setHome = spacetimedb.reducer(
+  { x: t.i32(), y: t.i32() },
+  (ctx, { x, y }) => {
+    const existing = ctx.db.user.identity.find(ctx.sender);
+    if (!existing) throw new SenderError('not connected');
+    ctx.db.user.identity.update({ ...existing, homeX: x, homeY: y });
+  }
+);
 
 const SeedPayload = t.object('SeedPayload', {
   id: t.string(),
@@ -594,6 +638,8 @@ export const setUsername = spacetimedb.reducer(
       createdAt: existing?.createdAt ?? ctx.timestamp,
       lastSeen: ctx.timestamp,
       online: existing?.online ?? true,
+      homeX: existing?.homeX,
+      homeY: existing?.homeY,
     };
     if (existing) {
       ctx.db.user.identity.update(row);

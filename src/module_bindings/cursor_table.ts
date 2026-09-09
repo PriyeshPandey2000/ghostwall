@@ -12,12 +12,7 @@ import {
 
 export default __t.row({
   identity: __t.identity().primaryKey(),
-  username: __t.string(),
-  avatar: __t.string(),
-  bio: __t.string(),
-  createdAt: __t.timestamp().name("created_at"),
-  lastSeen: __t.timestamp().name("last_seen"),
-  online: __t.bool(),
-  homeX: __t.option(__t.i32()).name("home_x"),
-  homeY: __t.option(__t.i32()).name("home_y"),
+  x: __t.i32(),
+  y: __t.i32(),
+  updatedAt: __t.timestamp().name("updated_at"),
 });

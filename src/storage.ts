@@ -27,6 +27,15 @@ export interface WallLiveStats {
   disappeared: number;
 }
 
+/** A live pointer position for someone other than the current user. */
+export interface LiveCursor {
+  id: string;
+  x: number;
+  y: number;
+  username: string;
+  avatar: string;
+}
+
 export interface StorageBackend {
   readonly kind: 'local' | 'spacetime';
   start(): void;
@@ -48,6 +57,11 @@ export interface StorageBackend {
   onProfileChanged(cb: (profile: UserProfile) => void): void;
   /** Only implemented by backends with real shared data (Spacetime). */
   onStatsChanged?(cb: (stats: WallLiveStats) => void): void;
+  /** Broadcasts this user's pointer position. Throttle before calling. */
+  sendCursor?(x: number, y: number): void;
+  onCursorsChanged?(cb: (cursors: LiveCursor[]) => void): void;
+  setHome?(x: number, y: number): void;
+  getMyHome?(): { x: number; y: number } | null;
 }
 
 const OBJECTS_KEY = 'thewall_objects';
@@ -272,4 +286,20 @@ export function subscribeProfile(cb: (profile: UserProfile) => void): void {
 /** No-op on backends without real shared data (e.g. LocalStorageBackend). */
 export function subscribeStats(cb: (stats: WallLiveStats) => void): void {
   activeBackend.onStatsChanged?.(cb);
+}
+
+export function sendCursor(x: number, y: number): void {
+  activeBackend.sendCursor?.(x, y);
+}
+
+export function subscribeCursors(cb: (cursors: LiveCursor[]) => void): void {
+  activeBackend.onCursorsChanged?.(cb);
+}
+
+export function setHome(x: number, y: number): void {
+  activeBackend.setHome?.(x, y);
+}
+
+export function getMyHome(): { x: number; y: number } | null {
+  return activeBackend.getMyHome?.() ?? null;
 }

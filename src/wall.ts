@@ -1,6 +1,17 @@
 import { CanvasEngine } from './canvas';
 import { seedWallIfNeeded } from './seed';
-import { isSpacetime, loadUserProfile, saveUserProfile, subscribeObjects, subscribeStats, updateObject } from './storage';
+import {
+  getMyHome,
+  isSpacetime,
+  loadUserProfile,
+  saveUserProfile,
+  sendCursor,
+  setHome,
+  subscribeCursors,
+  subscribeObjects,
+  subscribeStats,
+  updateObject,
+} from './storage';
 import { formatTimeAgo, formatTimeLeft, getRandomUsername } from './utils';
 import type { WallObject } from './types';
 
@@ -39,6 +50,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       <div class="top-bar">
         <div class="top-bar-left">
           <button class="top-btn" id="btn-profile">👤 <span id="profile-name">Enter username</span></button>
+          <button class="top-btn" id="btn-home" data-tooltip="Set home here" style="display:none">🏠</button>
         </div>
         <div class="top-bar-right">
           <div class="online-indicator" id="online-indicator" style="display:none">
@@ -79,6 +91,9 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   // local seeding is only for the single-user localStorage backend.
   if (!isSpacetime()) seedWallIfNeeded();
 
+  let lastCursorSentAt = 0;
+  const CURSOR_THROTTLE_MS = 120;
+
   const engine = new CanvasEngine({
     container: canvasEl,
     onZoomChange: (zoom) => {
@@ -87,15 +102,65 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     },
     onObjectSelected: (obj) => handleObjectSelected(obj),
     onToolChange: () => {},
+    onCursorMove: (x, y) => {
+      if (!isSpacetime()) return;
+      const now = Date.now();
+      if (now - lastCursorSentAt < CURSOR_THROTTLE_MS) return;
+      lastCursorSentAt = now;
+      sendCursor(x, y);
+    },
   });
 
   if (isSpacetime()) {
-    subscribeObjects((objects) => engine.syncObjects(objects));
+    // "someone drew nearby" — skip the initial full snapshot (that's just
+    // existing marks loading, not new activity), then toast on later inserts
+    // by someone else within range of wherever the camera currently is.
+    let knownIds: Set<string> | null = null;
+    const NEARBY_RADIUS = 3000;
+    subscribeObjects((objects) => {
+      engine.syncObjects(objects);
+      if (knownIds === null) {
+        knownIds = new Set(objects.map(o => o.id));
+        return;
+      }
+      const center = engine.getCameraCenter();
+      for (const obj of objects) {
+        if (knownIds.has(obj.id)) continue;
+        knownIds.add(obj.id);
+        if (obj.author === userProfile.username) continue;
+        const dist = Math.hypot(obj.x - center.x, obj.y - center.y);
+        if (dist <= NEARBY_RADIUS) {
+          showDiscoveryMessage(`🎨 @${obj.author} drew something nearby`);
+        }
+      }
+    });
+
+    subscribeCursors((cursors) => engine.renderRemoteCursors(cursors));
     subscribeStats((stats) => {
       const wrap = document.getElementById('online-indicator');
       const countEl = document.getElementById('online-count');
       if (wrap) wrap.style.display = '';
       if (countEl) countEl.textContent = String(stats.onlineNow);
+      refreshHomeButton();
+    });
+
+    const homeBtn = document.getElementById('btn-home') as HTMLButtonElement | null;
+    if (homeBtn) homeBtn.style.display = '';
+    function refreshHomeButton(): void {
+      if (!homeBtn) return;
+      const home = getMyHome();
+      homeBtn.dataset.tooltip = home ? 'Go home' : 'Set home here';
+    }
+    homeBtn?.addEventListener('click', () => {
+      const home = getMyHome();
+      if (home) {
+        engine.teleportTo(home.x, home.y, 1);
+      } else {
+        const center = engine.getCameraCenter();
+        setHome(center.x, center.y);
+        showDiscoveryMessage('🏠 home set here — find it anytime from the top bar');
+        setTimeout(refreshHomeButton, 300);
+      }
     });
   }
 

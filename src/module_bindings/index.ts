@@ -42,7 +42,9 @@ import DrawOverReducer from "./draw_over_reducer";
 import RecomputeWallStatsReducer from "./recompute_wall_stats_reducer";
 import RemoveReactionReducer from "./remove_reaction_reducer";
 import SeedObjectsReducer from "./seed_objects_reducer";
+import SetHomeReducer from "./set_home_reducer";
 import SetUsernameReducer from "./set_username_reducer";
+import UpdateCursorReducer from "./update_cursor_reducer";
 import UpdateObjectReducer from "./update_object_reducer";
 
 // Import all procedure arg schemas
@@ -50,6 +52,7 @@ import UpdateObjectReducer from "./update_object_reducer";
 // Import all table schema definitions
 import CanvasObjectRow from "./canvas_object_table";
 import CommentRow from "./comment_table";
+import CursorRow from "./cursor_table";
 import ObjectHistoryRow from "./object_history_table";
 import ReactionRow from "./reaction_table";
 import UserRow from "./user_table";
@@ -88,6 +91,17 @@ const tablesSchema = __schema({
       { name: 'comment_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CommentRow),
+  cursor: __table({
+    name: 'cursor',
+    indexes: [
+      { accessor: 'identity', name: 'cursor_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+    ],
+    constraints: [
+      { name: 'cursor_identity_key', constraint: 'unique', columns: ['identity'] },
+    ],
+  }, CursorRow),
   objectHistory: __table({
     name: 'object_history',
     indexes: [
@@ -154,7 +168,9 @@ const reducersSchema = __reducers(
   __reducerSchema("recompute_wall_stats", RecomputeWallStatsReducer),
   __reducerSchema("remove_reaction", RemoveReactionReducer),
   __reducerSchema("seed_objects", SeedObjectsReducer),
+  __reducerSchema("set_home", SetHomeReducer),
   __reducerSchema("set_username", SetUsernameReducer),
+  __reducerSchema("update_cursor", UpdateCursorReducer),
   __reducerSchema("update_object", UpdateObjectReducer),
 );
 

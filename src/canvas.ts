@@ -12,6 +12,26 @@ export interface CanvasEngineOptions {
   onObjectSelected?: (obj: WallObject | null) => void;
   onToolChange?: (tool: Tool) => void;
   onZoomChange?: (zoom: number) => void;
+  /** World-space pointer position, fired on every move regardless of tool/drawing state. */
+  onCursorMove?: (x: number, y: number) => void;
+}
+
+export interface RemoteCursor {
+  id: string;
+  x: number;
+  y: number;
+  username: string;
+  avatar: string;
+}
+
+/** Deterministic hue (0-360) from an identity string, so a remote cursor's
+ *  color stays stable across renders instead of reassigning randomly. */
+function hashToHue(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % 360;
 }
 
 export function getSvgPathFromStroke(stroke: number[][]): string {
@@ -57,6 +77,7 @@ export class CanvasEngine {
   private shapeStart: { x: number; y: number } | null = null;
   private tempShape: Konva.Shape | null = null;
   private boundNodeMap = new WeakMap<Konva.Node, WallObject>();
+  private remoteCursorNodes = new Map<string, Konva.Group>();
   /** Set when the current pointer gesture actually drew/moved, so the click
    *  handler doesn't open an info popup right after the user finishes drawing. */
   private gestureMoved = false;
@@ -229,6 +250,14 @@ export class CanvasEngine {
     this.stage.on('mousedown touchstart', (e) => this.handlePointerDown(e));
     this.stage.on('mousemove touchmove', (e) => this.handlePointerMove(e));
     this.stage.on('mouseup touchend', (e) => this.handlePointerUp(e));
+
+    // Independent of tool/drawing state — fires on every hover so remote
+    // viewers can see this cursor moving, not just while actively drawing.
+    this.stage.on('mousemove touchmove', () => {
+      if (!this.options.onCursorMove) return;
+      const pos = this.getPointerPos();
+      this.options.onCursorMove(pos.x, pos.y);
+    });
 
     this.stage.on('click tap', (e) => {
       // Select, React, and Draw all let you tap an existing mark to inspect it.
@@ -1214,6 +1243,50 @@ export class CanvasEngine {
 
   getZoom(): number {
     return this.stage.scaleX();
+  }
+
+  /** World-space point currently at the center of the viewport. */
+  getCameraCenter(): { x: number; y: number } {
+    const scale = this.stage.scaleX();
+    return {
+      x: (this.stage.width() / 2 - this.stage.x()) / scale,
+      y: (this.stage.height() / 2 - this.stage.y()) / scale,
+    };
+  }
+
+  /** Renders other users' live cursors on the ui layer. Diffs against the
+   *  previous set so idle cursors don't get destroyed/recreated every tick. */
+  renderRemoteCursors(cursors: RemoteCursor[]): void {
+    const seen = new Set<string>();
+    for (const c of cursors) {
+      seen.add(c.id);
+      let group = this.remoteCursorNodes.get(c.id);
+      if (!group) {
+        const hue = hashToHue(c.id);
+        const color = `hsl(${hue}, 75%, 60%)`;
+        group = new Konva.Group({ x: c.x, y: c.y, listening: false });
+        group.add(new Konva.Circle({ radius: 5, fill: color, stroke: '#0a0a0a', strokeWidth: 1.5 }));
+        group.add(new Konva.Text({
+          x: 10, y: -8,
+          text: `${c.avatar} ${c.username}`,
+          fontSize: 12,
+          fontFamily: 'Space Mono, monospace',
+          fill: color,
+          shadowColor: '#000', shadowBlur: 4, shadowOpacity: 0.8,
+        }));
+        this.uiLayer.add(group);
+        this.remoteCursorNodes.set(c.id, group);
+      } else {
+        group.to({ x: c.x, y: c.y, duration: 0.12 });
+      }
+    }
+    for (const [id, group] of [...this.remoteCursorNodes]) {
+      if (!seen.has(id)) {
+        group.destroy();
+        this.remoteCursorNodes.delete(id);
+      }
+    }
+    this.uiLayer.batchDraw();
   }
 
   getStage(): Konva.Stage {
