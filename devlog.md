@@ -27,7 +27,51 @@ The question V1/V1.1 is trying to answer: **"Is there a reason to open Ghostwall
 
 ---
 
-## Current version: V1.1 — "The Living Wall"
+## Current version: V1.2 — "Place, not an editor"
+
+User feedback drive (V1.2).Reduce the tool feeling → the wall should feel like a place you draw on, not an editor. Everything else (auth, backend, payments, profiles, comments, marketplace, more tools) stays deferred. The real validation is now 5–10 people using it unassisted and watching the five signals — especially "do they come back?".
+
+### V1.2 work log
+
+#### Toolbar: Draw · Text · Erase · React, everything else under More
+- Primary toolbar is now **Draw · Text · Erase · React**. Select moved into **More** ("Select & pan") so the first screen has zero editor chrome.
+- Default active tool is **Draw** (was Select). One-time hint pill "✏️ Draw anywhere" (marker `thewall_draw_hint`) auto-dismisses after 4s and disappears forever on first dismissal or first mark.
+- New `react` tool + `getTool()` on the engine; cursors per tool (`getCursorForTool`).
+
+#### Popup redesign: content first, then actions, metadata demoted
+- New `.oi-*` popup: author → artwork preview (`node.toDataURL({pixelRatio:2})`) → reaction row → primary actions (**Draw over it**, **Share**) → muted meta line with a **live countdown** ("18h 22m left" → "fading away" → "Gone." via `formatTimeLeft`, ticking every 1s).
+- Secret objects get their own reveal flow instead of the generic popup.
+- **Bug found & fixed (real):** popups opened for marks near the screen bottom rendered off-viewport (the "Draw over it" button sat below the fold). The positioning code clamped with a fixed constant (`innerHeight - 260`) instead of measuring the popup. Now the popup is appended, measured, placed **above** the mark, falling back **below** it, then clamped so the whole card (all buttons) stays reachable. Preview `max-height` also trimmed 180→130px.
+
+#### Discover: prominent 🎲 FAB + event-style reveal
+- `#btn-random` was removed from the top bar; a prominent gradient **🎲 Find something weird** FAB lives bottom-right (label hides on mobile) and calls the same `doWeirdDiscovery()`.
+- Reveal copy reads like an event: **"You found this."** → "Left 1d ago by @luna" → content + stats → **Go there / Keep wandering**. `.dr-eyebrow` + `fadeUp` entry.
+
+#### Reactions: quick palette on the mark
+- In React mode, clicking a mark pops a compact emoji palette pinned to it (`.quick-react`); picking one persists the reaction and shows a toast. Empty-space click (deselect) closes it.
+- **Investigation flap:** the reaction appeared to vanish from storage. False alarm — the seeds include several `sticker`-type objects, and tests queried `.find(o => o.type === 'sticker')` (the *first* sticker = a seed) while the placed sticker is appended last. The write was always correct.
+
+#### Seeds: curated cast (marker `thewall_seed_v2`)
+- Rewrote seed.ts into 33 memorable pieces with narrative characters: the **robin/theo/mia** face trio, the **aster/comet/century** spectacle, **milo×2** (🚀 rocket + "this corner is mine now 🚧" text, cross-modified by `moss`), **ghost×2** (twisted spire + fading 🕸️ trace), a **404** locked mystery far off near (±9800), plus a second neighborhood (pixel, orbit time capsule, sprout, ghost2 web) and loners (ancient + fourohfour).
+- Placements keyed by unique `key` (author can repeat). Migration: if `thewall_seeded_v1` is present the store is wiped before re-seeding (pre-launch clean slate; seeds and user marks are indistinguishable once written).
+
+#### Ghost lifecycle: fade → ghost → Gone
+- New `ghostUntil` field + `GHOST_MS` (24h). Fade phases via `fadeOpacity`: solid 1→0.55 across a mark's life, then ghost 0.55→0.05 until `ghostUntil`; `animateExpiredObjects` (3s tick) destroys and persists removal once past `ghostUntil`.
+- User-created marks get `ghostUntil = expiresAt + GHOST_MS` on every creation site (stroke, shape, text, sticker, secret, image). **Seeds get no `ghostUntil`** — they linger as faint fossil traces at 0.1 forever, so an empty wall is never truly empty (archaeology, not dead pixels).
+- Verified: a synthetic mark past `ghostUntil` is removed within one tick; a mark inside its ghost window survives and keeps fading.
+
+#### V1.2 verification (Playwright, fresh localStorage, zero console errors)
+- ✅ Toolbar = 4 primary (draw/text/erase/react) + 7 more, starts in Draw, FAB present.
+- ✅ Draw-mode click opens redesigned popup (preview img, author, 6 reactions, Draw-over + Share actions, live "23h 59m left · just now" meta) **and the card fits the viewport**.
+- ✅ Share copies `#/w?id=<id>`.
+- ✅ Draw over it → tool switches to Draw + `modifiedBy` recorded.
+- ✅ React palette (6 emoji) → click persists reaction on the placed object, palette closes, empty-click deselect closes it.
+- ✅ 🎲 FAB → "You found this. | a secret 🤫 | Left 1d ago by @luna" → overlay closes.
+- ✅ Seed cast: 33 pieces, milo×2 / ghost×2 / 404×1 / robin×1, spread to ±9800.
+
+---
+
+## V1.1 — "The Living Wall" (shipped, commit 8b4b2f1)
 
 Goals (in priority order):
 1. Enter immediately
@@ -112,9 +156,9 @@ Goals (in priority order):
 | File | Role |
 |---|---|
 | `src/main.ts` | Hash router: `#/wall`, `#/w?id=<objectId>`, `#/landing` (default) |
-| `src/canvas.ts` | Konva engine: stage, layers, pan/zoom, tools, Transformer, undo/redo, grid, expiration fade, teleports, `drawRef` helpers |
-| `src/wall.ts` | Wall page: toolbar, top-bar, info popup, discovery panel + reveal, profile panel, comments, onboarding, share/copy-link |
-| `src/seed.ts` | One-time seeded content (author-keyed `place()` layout) |
+| `src/canvas.ts` | Konva engine: stage, layers, pan/zoom, tools, Transformer, undo/redo, grid, **ghost lifecycle** (`ghostUntil`, `fadeOpacity`, `animateExpiredObjects`), teleports, `drawRef` helpers |
+| `src/wall.ts` | Wall page: toolbar (**Draw·Text·Erase·React** + More), top-bar, redesigned `.oi-*` popup, 🎲 discover FAB + reveal, **quick-react palette**, `maybeShowDrawHint`, profile panel, onboarding, share/copy-link |
+| `src/seed.ts` | One-time seeded content (marker `thewall_seed_v2`, key-based `place()`, narrative cast) |
 | `src/storage.ts` | In-memory-first persistence: `localStore` object + load/save helpers (localStorage optional) |
 | `src/landing.ts` | Landing page |
 | `src/types.ts` | `WallObject`, `UserProfile`, `DURATION_MS` (24h/7d) |
@@ -151,4 +195,4 @@ Supabase/Firebase, real-time WebSockets, authentication, profiles beyond a local
 - [x] Onboarding overlay: "Welcome to Ghostwall. Everything you leave here fades after 24 hours…" + Start exploring (marker `thewall_seen_intro`)
 - [x] Share link button in object info popup (copy `#/w?id=…`)
 - [x] Storage reframe comment cleanup (in-memory-first language)
-- [ ] Ship V1.1, deploy, then *actually use it for a few days* and watch for the signals (did I press Random? did I draw a second thing? did I modify someone's drawing? did I come back? did I want to send a link?)
+- [ ] Ship V1.2 live, then *actually use it for a few days* and watch for the signals (did I press Random? did I draw a second thing? did I modify someone's drawing? did I come back? did I want to send a link?)

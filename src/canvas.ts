@@ -3,9 +3,9 @@ import { getStroke } from 'perfect-freehand';
 import { generateId } from './utils';
 import { loadObjects, saveObjects, addObject, loadUserProfile } from './storage';
 import type { WallObject } from './types';
-import { DURATION_MS } from './types';
+import { DURATION_MS, GHOST_MS } from './types';
 
-export type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule';
+export type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'react';
 
 export interface CanvasEngineOptions {
   container: HTMLDivElement;
@@ -41,7 +41,7 @@ export class CanvasEngine {
   private gridLayer: Konva.Layer;
   private uiLayer: Konva.Layer;
   private container: HTMLDivElement;
-  private currentTool: Tool = 'select';
+  private currentTool: Tool = 'draw';
   private currentColor: string = '#ff4d4d';
   private strokeWidth: number = 3;
   private isDrawing: boolean = false;
@@ -57,6 +57,9 @@ export class CanvasEngine {
   private shapeStart: { x: number; y: number } | null = null;
   private tempShape: Konva.Shape | null = null;
   private boundNodeMap = new WeakMap<Konva.Node, WallObject>();
+  /** Set when the current pointer gesture actually drew/moved, so the click
+   *  handler doesn't open an info popup right after the user finishes drawing. */
+  private gestureMoved = false;
 
   constructor(options: CanvasEngineOptions) {
     this.options = options;
@@ -121,10 +124,10 @@ export class CanvasEngine {
       this.stage.position({ x: this.stage.width() / 2, y: this.stage.height() / 2 });
     }
 
-    // Initial tool is 'select', so the stage is draggable to pan the infinite
-    // canvas by dragging empty space. setTool() toggles this for drawing tools.
-    this.stage.draggable(true);
-    this.stage.container().style.cursor = 'grab';
+    // We start in Draw mode, so the stage is not draggable (drag draws).
+    // setTool() toggles dragging only for the Select tool (pan by empty-space drag).
+    this.stage.draggable(this.currentTool === 'select');
+    this.stage.container().style.cursor = this.getCursorForTool(this.currentTool);
 
     this.stage.on('dragstart', () => {
       if (this.currentTool === 'select') this.stage.container().style.cursor = 'grabbing';
@@ -221,7 +224,7 @@ export class CanvasEngine {
     this.stage.on('mousedown touchstart', (e) => {
       const target = e.target;
       if (target === this.stage || target.getLayer() === this.gridLayer) {
-        if (this.currentTool === 'select') {
+        if (this.currentTool === 'select' || this.currentTool === 'react') {
           this.deselectAll();
           this.options.onObjectSelected?.(null);
         }
@@ -233,7 +236,10 @@ export class CanvasEngine {
     this.stage.on('mouseup touchend', (e) => this.handlePointerUp(e));
 
     this.stage.on('click tap', (e) => {
-      if (this.currentTool !== 'select') return;
+      // Select, React, and Draw all let you tap an existing mark to inspect it.
+      if (this.currentTool !== 'select' && this.currentTool !== 'react' && this.currentTool !== 'draw') return;
+      // Don't open a popup immediately after the user just drew something.
+      if (this.gestureMoved) return;
       const target = e.target;
       if (target === this.stage) return;
 
@@ -262,7 +268,8 @@ export class CanvasEngine {
 
   private handlePointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>): void {
     const pos = this.getPointerPos();
-    if (this.currentTool === 'select') return;
+    this.gestureMoved = false;
+    if (this.currentTool === 'select' || this.currentTool === 'react') return;
     // Prevent the browser from moving focus away from a newly created text
     // input overlay (otherwise the overlay blurs + auto-closes immediately).
     if (this.currentTool === 'text' || this.currentTool === 'secret') {
@@ -306,6 +313,7 @@ export class CanvasEngine {
 
   private handlePointerMove(_e: Konva.KonvaEventObject<MouseEvent | TouchEvent>): void {
     if (!this.isDrawing) return;
+    this.gestureMoved = true;
     const pos = this.getPointerPos();
 
     switch (this.currentTool) {
@@ -365,6 +373,7 @@ export class CanvasEngine {
             author: loadUserProfile()?.username || 'anonymous',
             createdAt: Date.now(),
             expiresAt: Date.now() + DURATION_MS['24h'],
+            ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
             keptForever: false,
             reactions: [],
             comments: [],
@@ -446,6 +455,7 @@ export class CanvasEngine {
       author: loadUserProfile()?.username || 'anonymous',
       createdAt: Date.now(),
       expiresAt: Date.now() + DURATION_MS['24h'],
+      ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
       keptForever: false,
       reactions: [],
       comments: [],
@@ -530,6 +540,7 @@ export class CanvasEngine {
           author: loadUserProfile()?.username || 'anonymous',
           createdAt: Date.now(),
           expiresAt: Date.now() + DURATION_MS['24h'],
+          ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
           keptForever: false,
           reactions: [],
           comments: [],
@@ -584,6 +595,7 @@ export class CanvasEngine {
       author: loadUserProfile()?.username || 'anonymous',
       createdAt: Date.now(),
       expiresAt: Date.now() + DURATION_MS['24h'],
+      ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
       keptForever: false,
       reactions: [],
       comments: [],
@@ -637,6 +649,7 @@ export class CanvasEngine {
           author: loadUserProfile()?.username || 'anonymous',
           createdAt: Date.now(),
           expiresAt: Date.now() + DURATION_MS['24h'],
+          ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
           keptForever: false,
           reactions: [],
           comments: [],
@@ -940,33 +953,66 @@ export class CanvasEngine {
     }
   }
 
-  /** 1 = fresh, ~0.35 = on the verge of disappearing. */
+  /**
+   * The life-death curve. A mark stays nearly solid and fades very subtly
+   * across its whole life (1 → 0.55), then keeps fading as a ghost trace
+   * (0.55 → ~0.05) until ghostUntil, when it is removed for good.
+   */
   private fadeOpacity(obj: WallObject): number {
     if (!obj.expiresAt) return 1;
-    const left = obj.expiresAt - Date.now();
-    const total = obj.expiresAt - obj.createdAt;
-    if (total <= 0 || left <= 0) return 0.35;
-    const ratio = left / total; // 1 = brand new, 0 = gone
-    // Stay fairly solid until the last ~20% of life, then ease to 0.35
-    return Math.max(0.35, Math.min(1, 0.35 + ratio * 0.65));
+    const now = Date.now();
+    const life = obj.expiresAt - obj.createdAt;
+    if (life <= 0) return 0.4;
+
+    const expiry = obj.expiresAt;
+    if (now < expiry) {
+      // Living: 1 → 0.55 across the whole life, getting gently sparser.
+      const t = (now - obj.createdAt) / life;
+      return 1 - t * 0.45;
+    }
+
+    // Expired → ghost trace. If an explicit ghostUntil is set, fade toward
+    // nothing until it passes. Historical seeds without ghostUntil linger as
+    // faint traces forever (the wall keeps its archaeology).
+    if (!obj.ghostUntil) return 0.1;
+    const ghostTotal = obj.ghostUntil - obj.expiresAt;
+    if (ghostTotal <= 0) return 0.05;
+    const t = Math.min(1, (now - obj.expiresAt) / ghostTotal);
+    return Math.max(0.05, 0.55 - t * 0.5);
   }
 
   private animateExpiredObjects(): void {
     setInterval(() => {
       const now = Date.now();
+      const toRemove: string[] = [];
       this.objects.forEach(obj => {
         if (!obj.expiresAt || obj.keptForever) return;
         const node = this.konvaObjects.get(obj.id);
         if (!node) return;
+
+        // Ghost finished dying → it truly disappears.
+        if (obj.ghostUntil && obj.expiresAt <= now && now >= obj.ghostUntil) {
+          toRemove.push(obj.id);
+          return;
+        }
+
         const fade = this.fadeOpacity(obj);
-        if (obj.expiresAt <= now) {
-          // Fully elapsed — leave faded, no further redraws needed
-          if (node.opacity() !== 0.35) { node.opacity(0.35); this.mainLayer.batchDraw(); }
-        } else if (Math.abs(node.opacity() - fade) > 0.02) {
+        if (Math.abs(node.opacity() - fade) > 0.02) {
           node.opacity(fade);
           this.mainLayer.batchDraw();
         }
       });
+
+      if (toRemove.length) {
+        toRemove.forEach(id => {
+          const node = this.konvaObjects.get(id);
+          if (node) node.destroy();
+          this.konvaObjects.delete(id);
+        });
+        this.objects = this.objects.filter(o => !toRemove.includes(o.id));
+        saveObjects(this.objects);
+        this.mainLayer.batchDraw();
+      }
     }, 3000);
   }
 
@@ -1054,12 +1100,17 @@ export class CanvasEngine {
 
   setTool(tool: Tool): void {
     this.currentTool = tool;
-    // In select mode the stage itself is draggable so the user can pan the
+    // Only in select mode the stage itself is draggable so the user can pan the
     // infinite canvas by dragging empty space (drag on a piece moves that piece).
+    // React taps are kept drag-free so quick reactions don't accidentally pan.
     this.stage.draggable(tool === 'select');
     this.stage.container().style.cursor = this.getCursorForTool(tool);
     if (tool !== 'select') this.deselectAll();
     this.options.onToolChange?.(tool);
+  }
+
+  getTool(): Tool {
+    return this.currentTool;
   }
 
   setColor(color: string): void {
@@ -1075,6 +1126,7 @@ export class CanvasEngine {
       case 'draw': return 'crosshair';
       case 'erase': return 'cell';
       case 'text': return 'text';
+      case 'react': return 'pointer';
       case 'select': return 'grab';
       default: return 'crosshair';
     }
@@ -1136,6 +1188,7 @@ export class CanvasEngine {
       author: loadUserProfile()?.username || 'anonymous',
       createdAt: Date.now(),
       expiresAt: Date.now() + DURATION_MS['24h'],
+      ghostUntil: Date.now() + DURATION_MS['24h'] + GHOST_MS,
       keptForever: false,
       reactions: [],
       comments: [],

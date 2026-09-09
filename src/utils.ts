@@ -36,6 +36,21 @@ export function formatTimeRemaining(expiresAt: number | null): string {
   return `${hours}h ${minutes}m remaining`;
 }
 
+/** "18h 22m left" — the living countdown shown in the object popup. */
+export function formatTimeLeft(expiresAt: number | null): string {
+  if (!expiresAt) return 'kept forever';
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) return 'Gone.';
+
+  const hours = Math.floor(remaining / (1000 * 60 * 60));
+  const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h left`;
+  }
+  return `${hours}h ${minutes}m left`;
+}
+
 export function formatCount(n: number): string {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;

@@ -1,22 +1,24 @@
 import { CanvasEngine } from './canvas';
 import { seedWallIfNeeded } from './seed';
 import { loadUserProfile, saveUserProfile, updateObject } from './storage';
-import { formatTimeAgo, formatTimeRemaining, getRandomUsername } from './utils';
+import { formatTimeAgo, formatTimeLeft, getRandomUsername } from './utils';
 import type { WallObject } from './types';
 
-type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule';
+type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'react';
 
-// Primary tools shown in the main toolbar. The rest hide under "More" so the
-// first experience stays instantly understandable.
+// The wall should feel like a place, not an editor. Only the four verbs that
+// matter for the first visit sit in the primary toolbar; everything else hides
+// under "More" so the tool-feeling never leads the experience.
 const PRIMARY_TOOLS: { id: Tool; icon: string; label: string }[] = [
-  { id: 'select', icon: '🖱️', label: 'Select' },
   { id: 'draw', icon: '✏️', label: 'Draw' },
-  { id: 'erase', icon: '🧽', label: 'Erase' },
   { id: 'text', icon: 'Aa', label: 'Text' },
-  { id: 'sticker', icon: '🎨', label: 'Sticker' },
+  { id: 'erase', icon: '🧽', label: 'Erase' },
+  { id: 'react', icon: '❤️', label: 'React' },
 ];
 
 const MORE_TOOLS: { id: Tool; icon: string; label: string; hint: string }[] = [
+  { id: 'select', icon: '🖱️', label: 'Select & pan', hint: 'drag empty space to move around' },
+  { id: 'sticker', icon: '🎨', label: 'Sticker', hint: 'drop a sticker' },
   { id: 'rect', icon: '▭', label: 'Rectangle', hint: 'outline shape' },
   { id: 'circle', icon: '◯', label: 'Circle', hint: 'outline shape' },
   { id: 'image', icon: '🖼️', label: 'Image', hint: 'upload a picture' },
@@ -45,13 +47,16 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
         <div class="top-bar-right">
           <div class="zoom-indicator" id="zoom-indicator">100%</div>
           <button class="top-btn accent" id="btn-explore">🔭 Explore</button>
-          <button class="top-btn" id="btn-random">🎲</button>
         </div>
+      </div>
+
+      <div class="discover-fab" id="btn-discover" title="Take me somewhere weird">
+        <span class="fab-die">🎲</span><span class="fab-label">Find something weird</span>
       </div>
 
       <div class="toolbar" id="toolbar">
         ${PRIMARY_TOOLS.map(t => `
-          <button class="tool-btn ${t.id === 'select' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
+          <button class="tool-btn ${t.id === 'draw' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
             <span>${t.icon}</span>
           </button>
         `).join('')}
@@ -104,6 +109,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   setupKeyboard(engine);
 
   maybeShowOnboarding();
+  maybeShowDrawHint();
 
   // Handle deep links
   if (initial.deepLink) {
@@ -208,7 +214,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   function setupTopBar(engineRef: CanvasEngine, profile: typeof userProfile): void {
     document.getElementById('btn-profile')?.addEventListener('click', () => openProfilePanel(engineRef, profile));
     document.getElementById('btn-explore')?.addEventListener('click', openDiscoveryPanel);
-    document.getElementById('btn-random')?.addEventListener('click', () => doWeirdDiscovery(engineRef));
+    document.getElementById('btn-discover')?.addEventListener('click', () => doWeirdDiscovery(engineRef));
   }
 
   /**
@@ -255,10 +261,10 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     const reveal = document.createElement('div');
     reveal.className = 'discovery-reveal';
     reveal.innerHTML = `
-      <div class="dr-find">📍 You found something left ${formatTimeAgo(obj.createdAt)}</div>
+      <div class="dr-eyebrow">You found this.</div>
       <div class="dr-body">
         <div class="dr-line">${getObjPreview(obj)}</div>
-        <div class="dr-author">${obj.type === 'sticker' ? (String(obj.data.emoji) || '') + ' ' : ''}@${obj.author} was here</div>
+        <div class="dr-author">Left ${formatTimeAgo(obj.createdAt)} by ${obj.type === 'sticker' ? (String(obj.data.emoji) || '') + ' ' : ''}@${obj.author}</div>
         <div class="dr-stats">
           ${modifiedCount > 0 ? `<span>↑ modified by ${modifiedCount} person${modifiedCount > 1 ? 's' : ''}</span>` : ''}
           ${reactedCount > 0 ? `<span>❤️ × ${reactedCount}</span>` : ''}
@@ -472,6 +478,21 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     });
   }
 
+  /** One-time nudge that reveals the first action — you're already in Draw mode. */
+  function maybeShowDrawHint(): void {
+    if (localStorage.getItem('thewall_draw_hint')) return;
+    localStorage.setItem('thewall_draw_hint', '1');
+    const hint = document.createElement('div');
+    hint.className = 'draw-hint';
+    hint.innerHTML = '✏️ Draw anywhere';
+    container.appendChild(hint);
+    const dismiss = () => hint.remove();
+    window.setTimeout(dismiss, 4000);
+    hint.addEventListener('click', dismiss);
+    // Any first mark hides it too (listener stays attached; the handler is idempotent).
+    engine.getStage().on('mouseup touchend', dismiss);
+  }
+
   function openProfilePanel(_engineRef: CanvasEngine, profile: typeof userProfile): void {
     closePanels();
     const panel = document.createElement('div');
@@ -515,10 +536,21 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     });
   }
 
+  function removeQuickReact(): void {
+    document.querySelector('.quick-react')?.remove();
+  }
+
   function handleObjectSelected(obj: WallObject | null): void {
+    removeQuickReact();
     const existing = document.querySelector('.object-info-popup');
     if (existing) existing.remove();
     if (!obj) return;
+
+    // In React mode a mark responds with a quick emoji palette — no popup.
+    if (engine.getTool() === 'react') {
+      quickReact(obj);
+      return;
+    }
 
     if (obj.type === 'secret') {
       handleSecretNear(obj);
@@ -532,48 +564,82 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     const screenY = rect.y - 20;
 
     const isPermanent = obj.keptForever;
+    const myObj = obj.id === findMyObject(obj);
 
     const popup = document.createElement('div');
     popup.className = 'object-info-popup';
+
+    let previewSrc = '';
+    try { previewSrc = (node as unknown as { toDataURL: (o: object) => string }).toDataURL({ pixelRatio: 2 }); } catch { /* noop */ }
+
     popup.innerHTML = `
-      <div class="object-info-header">
-        <div class="object-avatar">🦊</div>
-        <div style="flex:1">
-          <div class="object-author" style="display:flex;align-items:center;gap:6px">
-            @${obj.author}
-            ${isPermanent ? '<span class="permanent-badge">∞</span>' : ''}
-          </div>
-          <div class="object-time">${formatTimeAgo(obj.createdAt)}</div>
-        </div>
+      <div class="oi-author">
+        <span class="oi-avatar">🦊</span>
+        <span class="oi-name">@${obj.author}</span>
+        ${isPermanent ? '<span class="permanent-badge">∞</span>' : ''}
       </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">${getObjPreview(obj)}</div>
-      ${isPermanent
-        ? `<div class="permanent-badge">Kept forever by @${obj.author}</div>`
-        : `<div class="object-timer">expires in ${formatTimeRemaining(obj.expiresAt)}</div>`
-      }
-      ${obj.modifiedBy.length > 0 ? `
-        <div class="modify-count">Started by @${obj.author} · modified by ${obj.modifiedBy.length} people</div>
-      ` : ''}
-      <div class="object-actions">
+      ${previewSrc ? `<img class="oi-preview" alt="" src="${previewSrc}" />` : `<div class="oi-preview">${getObjPreview(obj)}</div>`}
+      <div class="oi-reactions">
         ${EMOJI_REACTIONS.map(r => `
-          <button class="object-action-btn react-btn" data-emoji="${r}">${r} ${getReactionCount(obj, r)}</button>
+          <button class="oi-react-btn" data-emoji="${r}">${r} <span class="oi-count">${getReactionCount(obj, r)}</span></button>
         `).join('')}
-        <button class="object-action-btn" id="btn-draw-over">✏️ draw over</button>
-        <button class="object-action-btn" id="btn-comment">💬</button>
-        <button class="object-action-btn" id="btn-share">🔗</button>
-        ${obj.id === findMyObject() ? `<button class="object-action-btn" id="btn-delete" style="color:var(--accent)">🗑️</button>` : ''}
+      </div>
+      <div class="oi-actions">
+        <button class="oi-action primary" id="btn-draw-over">✏️ Draw over it</button>
+        <button class="oi-action primary" id="btn-share">🔗 Share</button>
+        <button class="oi-action" id="btn-comment">💬</button>
+        ${myObj ? `<button class="oi-action" id="btn-delete">🗑️</button>` : ''}
+      </div>
+      <div class="oi-meta">
+        <span id="oi-timer">${isPermanent ? 'kept forever' : formatTimeLeft(obj.expiresAt)}</span>
+        ${obj.modifiedBy.length > 0 ? `<span class="oi-dot">·</span><span>modified by ${obj.modifiedBy.length}</span>` : ''}
+        <span class="oi-dot">·</span><span>${formatTimeAgo(obj.createdAt)}</span>
       </div>
     `;
 
-    const popupX = Math.min(Math.max(screenX - 110, 10), window.innerWidth - 240);
-    const popupY = Math.min(Math.max(screenY - 10, 10), window.innerHeight - 320);
+    const popupX = Math.min(Math.max(screenX - 110, 10), Math.max(window.innerWidth - 320, 10));
+    const popupY = Math.min(Math.max(screenY - 10, 10), Math.max(window.innerHeight - 480, 10));
     popup.style.left = `${popupX}px`;
     popup.style.top = `${popupY}px`;
     container.appendChild(popup);
 
+    // Fit the whole popup inside the viewport: prefer above the mark, fall back
+    // below it, and clamp so every action button stays reachable.
+    const ph = popup.offsetHeight;
+    const pw = popup.offsetWidth;
+    const left = Math.min(Math.max(screenX - pw / 2, 10), Math.max(window.innerWidth - pw - 10, 10));
+    const above = screenY - ph - 12;
+    const belowMark = rect.y + rect.height + 12;
+    let top = above >= 10 ? above : Math.max(10, belowMark);
+    top = Math.min(Math.max(top, 10), Math.max(window.innerHeight - ph - 10, 10));
+    popup.style.left = `${Math.round(left)}px`;
+    popup.style.top = `${Math.round(top)}px`;
+
+    const popupEls = popup; // alias for closures below
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stopTimer = () => { if (timer) clearInterval(timer); timer = null; };
+    const closePopup = () => { stopTimer(); popupEls.remove(); };
+
+    if (!isPermanent && obj.expiresAt) {
+      const exp = obj.expiresAt;
+      const tick = () => {
+        const timerEl = popupEls.querySelector('#oi-timer');
+        if (!timerEl) { stopTimer(); return; }
+        const now = Date.now();
+        if (now >= exp) {
+          timerEl.textContent = 'fading away';
+          timerEl.classList.add('gone');
+        } else {
+          timerEl.textContent = formatTimeLeft(exp);
+        }
+      };
+      tick();
+      timer = setInterval(tick, 1000);
+    }
+
     popup.addEventListener('click', (e) => e.stopPropagation());
 
-    popup.querySelectorAll('.react-btn').forEach(btn => {
+    popup.querySelectorAll('.oi-react-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const emoji = (btn as HTMLElement).dataset.emoji!;
         const profile = loadUserProfile() || userProfile;
@@ -591,6 +657,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
         }
         updateObject(obj.id, { reactions });
         const updated = engine.getObjects().find(o => o.id === obj.id);
+        closePopup();
         handleObjectSelected(updated || obj);
       });
     });
@@ -601,11 +668,15 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       if (!obj.modifiedBy.includes(myProfile.username)) {
         updateObject(obj.id, { modifiedBy: [...obj.modifiedBy, myProfile.username] });
       }
-      popup.remove();
-      showDiscoveryMessage('Draw over it! Be the next artist.');
+      closePopup();
+      showDiscoveryMessage('Draw over it. Be the next artist.');
+      // Give the toolbar's Draw button the active state.
+      document.querySelectorAll('.tool-btn[data-tool], .more-tool-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('.tool-btn[data-tool="draw"]')?.classList.add('active');
     });
 
     popup.querySelector('#btn-comment')?.addEventListener('click', () => {
+      closePopup();
       openComments(obj);
     });
 
@@ -624,6 +695,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     });
 
     popup.querySelector('#btn-delete')?.addEventListener('click', () => {
+      closePopup();
       engine.deleteSelected();
     });
 
@@ -631,10 +703,57 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     (engine as unknown as { _selectedWallObjForDelete: WallObject })._selectedWallObjForDelete = obj;
   }
 
-  function findMyObject(): string | null {
+  /** React mode: a compact palette of emoji reactions pinned next to the mark. */
+  function quickReact(obj: WallObject): void {
+    const node = engine.getMainLayer().getChildren().find(c => c.id() === obj.id);
+    if (!node) return;
+    const rect = node.getClientRect();
+    const palette = document.createElement('div');
+    palette.className = 'quick-react';
+    palette.innerHTML = `
+      ${EMOJI_REACTIONS.map(r => `
+        <button class="qr-btn" data-emoji="${r}" data-count="${getReactionCount(obj, r)}">
+          ${r}<span class="qr-count">${getReactionCount(obj, r) || ''}</span>
+        </button>
+      `).join('')}
+    `;
+    let x = rect.x + rect.width / 2 - 120;
+    let y = rect.y - 52;
+    x = Math.min(Math.max(x, 10), window.innerWidth - 260);
+    y = Math.max(y, 10);
+    palette.style.left = `${x}px`;
+    palette.style.top = `${y}px`;
+    document.body.appendChild(palette);
+
+    palette.addEventListener('click', (e) => e.stopPropagation());
+
+    palette.querySelectorAll('.qr-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const emoji = (btn as HTMLElement).dataset.emoji!;
+        const profile = loadUserProfile() || userProfile;
+        const reactions = [...obj.reactions];
+        const existingReaction = reactions.find(r => r.emoji === emoji);
+        if (existingReaction) {
+          if (existingReaction.user === profile.username) {
+            existingReaction.count = Math.max(0, existingReaction.count - 1);
+          } else {
+            existingReaction.count += 1;
+            existingReaction.user = profile.username;
+          }
+        } else {
+          reactions.push({ emoji, user: profile.username, count: 1 });
+        }
+updateObject(obj.id, { reactions });
+        palette.remove();
+        showDiscoveryMessage(`${profile.avatar || ''} @${profile.username} reacted ${emoji}`);
+      });
+    });
+  }
+
+  function findMyObject(obj: WallObject): string | null {
     const p = loadUserProfile();
     if (!p) return null;
-    const selected = (engine as unknown as { _selectedWallObjForDelete?: WallObject })._selectedWallObjForDelete;
+    const selected = obj;
     return selected && selected.author === p.username ? selected.id : null;
   }
 

@@ -7,6 +7,8 @@ export interface WallObject {
   author: string;
   createdAt: number;
   expiresAt: number | null;
+  /** When the fade death-and-disappearance phase completes (object fully removed). Null/absent = stays as a ghost trace forever (historical seeds). */
+  ghostUntil?: number | null;
   keptForever: boolean;
   reactions: Reaction[];
   comments: Comment[];
@@ -56,3 +58,6 @@ export const DURATION_MS: Record<string, number> = {
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
 };
+
+/** How long a mark lingers as a faint "ghost" after it expires, before it truly disappears. */
+export const GHOST_MS = 24 * 60 * 60 * 1000;

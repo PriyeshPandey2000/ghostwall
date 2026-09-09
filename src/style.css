@@ -1285,3 +1285,230 @@ html, body {
     left: 16px;
   }
 }
+
+/* ============ V1.2 — The Living Wall polish ============ */
+
+/* Prominent weird-discovery button (the wall's exploration hook) */
+.discover-fab {
+  position: fixed;
+  right: 18px;
+  bottom: 24px;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  background: linear-gradient(135deg, rgba(255,77,77,0.9), rgba(125,107,255,0.9));
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 32px;
+  color: #fff;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+  animation: fadeUp 0.4s ease-out;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.discover-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 50px rgba(0,0,0,0.6);
+}
+.discover-fab .fab-die {
+  font-size: 18px;
+}
+.discover-fab .fab-label {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .discover-fab { padding: 12px 14px; }
+  .discover-fab .fab-label { display: none; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* One-time "Draw anywhere" hint */
+.draw-hint {
+  position: fixed;
+  left: 50%;
+  top: 84px;
+  transform: translateX(-50%);
+  z-index: 300;
+  padding: 10px 18px;
+  background: rgba(15,15,15,0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 30px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  pointer-events: all;
+  cursor: pointer;
+  animation: popIn 0.25s ease-out;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+
+/* Event-style weird discovery reveal */
+.dr-eyebrow {
+  font-family: var(--font);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.dr-author {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+/* Object popup — content first, metadata last */
+.oi-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.oi-avatar {
+  font-size: 16px;
+}
+.oi-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.oi-preview {
+  display: block;
+  width: 100%;
+  max-height: 130px;
+  object-fit: contain;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  color: var(--text-dim);
+  font-size: 24px;
+  text-align: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.oi-reactions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.oi-react-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 9px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--font);
+}
+.oi-react-btn:hover {
+  background: rgba(255,77,77,0.12);
+  border-color: rgba(255,77,77,0.4);
+  transform: translateY(-1px);
+}
+.oi-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.oi-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.oi-action {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font);
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.oi-action:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+}
+.oi-action.primary {
+  background: rgba(255,77,77,0.10);
+  border-color: rgba(255,77,77,0.30);
+  color: var(--text);
+  font-weight: 600;
+}
+.oi-action.primary:hover {
+  background: rgba(255,77,77,0.2);
+}
+.oi-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.oi-meta .gone {
+  color: var(--accent);
+}
+.oi-dot {
+  color: rgba(255,255,255,0.2);
+}
+
+/* React mode — quick emoji palette pinned to the mark */
+.quick-react {
+  position: fixed;
+  z-index: 260;
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(15,15,15,0.97);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  animation: popIn 0.18s ease-out;
+}
+.qr-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 20px;
+  padding: 6px 9px;
+  background: transparent;
+  border: none;
+  border-radius: 30px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: var(--font);
+}
+.qr-btn:hover {
+  background: rgba(255,77,77,0.15);
+  transform: scale(1.12);
+}
+.qr-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  min-height: 9px;
+}
