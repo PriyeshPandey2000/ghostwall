@@ -1,5 +1,5 @@
 import { generateId, randomInRange } from './utils';
-import { saveObjects } from './storage';
+import { loadObjects, saveObjects } from './storage';
 import type { WallObject } from './types';
 import { DURATION_MS } from './types';
 import { strokeToPathData } from './canvas';
@@ -7,6 +7,7 @@ import type { SeedPayload } from './module_bindings/types';
 import { wallToObjectData } from './map';
 
 const SEED_MARKER = 'thewall_seed_v2';
+const CORRIDOR_SEED_MARKER = 'confession_corridor_v1';
 
 function ms(ageDays: number, ageHours = 0): number {
   return Date.now() - ageDays * 24 * 60 * 60 * 1000 - ageHours * 60 * 60 * 1000;
@@ -26,7 +27,7 @@ interface SeedSpec {
   /** unique key used by place(); multiple pieces may share an author (characters) */
   key: string;
   author: string;
-  kind: 'text' | 'stroke' | 'sticker' | 'secret' | 'timecapsule' | 'shape';
+  kind: 'text' | 'stroke' | 'sticker' | 'secret' | 'timecapsule' | 'shape' | 'confession';
   ageDays: number;
   ageHours?: number;
   text?: string;
@@ -316,6 +317,77 @@ export function seedWallIfNeeded(): void {
 
   saveObjects(buildSeedObjects());
   localStorage.setItem(SEED_MARKER, '1');
+  seedCorridorIfNeeded();
+}
+
+/**
+ * The Confession Corridor seed content. Lives in its own dedicated region far
+ * from the main cluster so opening the Corridor and looking at the main wall
+ * are visually separate worlds. These are kept forever — the corridor's
+ * contract is "it stays" (moderation exists via the one-click hide floor).
+ */
+const CORRIDOR: SeedSpec[] = [
+  { key: 'cc_mother', author: 'moth', kind: 'confession', ageDays: 2, text: 'i never told my mother i loved her enough. telling the internet instead.', color: '#d8c8f0', fontSize: 15 },
+  { key: 'cc_two', author: 'sable', kind: 'confession', ageDays: 3, text: 'three years since she left. i still cook for two.', color: '#e0b3d8', fontSize: 16 },
+  { key: 'cc_tired', author: 'halcyon', kind: 'confession', ageDays: 1, text: 'im not sad. just tired. writing this down anyway.', color: '#c9d4ff', fontSize: 15, rotation: -2 },
+  { key: 'cc_2am', author: 'tilde', kind: 'confession', ageDays: 0, ageHours: 5, text: 'i found this wall at 2 a.m. and now i cant stop writing.', color: '#f0d9a0', fontSize: 14, rotation: 1 },
+  { key: 'cc_gentle', author: 'nimbus', kind: 'confession', ageDays: 4, text: 'thank you for being gentle in the replies under these.', color: '#d8c8f0', fontSize: 15 },
+  { key: 'cc_job', author: 'loam', kind: 'confession', ageDays: 0, ageHours: 12, text: 'i got the job. the first person i told was the internet.', color: '#bfe8b8', fontSize: 16, rotation: -1 },
+  { key: 'cc_margins', author: 'petrichor', kind: 'confession', ageDays: 6, text: 'i used to write in the margins of my school books. this is that.', color: '#e0b3d8', fontSize: 14 },
+  { key: 'cc_3am', author: 'ember', kind: 'confession', ageDays: 1, ageHours: 2, text: 'to whoever reads this at 3 a.m. — stay. one more day.', color: '#f0d9a0', fontSize: 16, rotation: 2 },
+];
+
+/**
+ * Build the corridor's authored confessions. keptForever is always true and
+ * expiresAt is null so nothing in the corridor fades — it is the one place on
+ * the wall where a feeling, once left, stays put.
+ */
+export function buildConfessionSeedObjects(): WallObject[] {
+  const objects: WallObject[] = [];
+
+  const add = (spec: SeedSpec, offsetX: number, offsetY: number, rotation = spec.rotation ?? 0) => {
+    const createdAt = ms(spec.ageDays, spec.ageHours || 0);
+    objects.push({
+      id: generateId(),
+      type: 'confession' as const,
+      x: offsetX,
+      y: offsetY,
+      data: { text: spec.text!, color: spec.color || '#d8c8f0', fontSize: spec.fontSize || 16, rotation: rotation || 0 },
+      author: spec.author,
+      createdAt,
+      expiresAt: null,
+      ghostUntil: null,
+      keptForever: true,
+      reactions: (spec.reactions || []).map(emoji => ({ emoji, user: spec.author, count: 1 })),
+      comments: [],
+      parentId: null,
+      modifiedBy: spec.modifiedBy || [],
+    });
+  };
+
+  const place = (key: string, x: number, y: number, rotation = 0) => {
+    const spec = CORRIDOR.find(s => s.key === key);
+    if (spec) add(spec, x, y, rotation);
+  };
+
+  // The corridor cluster — a loose ring around (12000, 12000), each a hand-span
+  // apart so the region reads like a few quiet people standing in a room.
+  const CENTER = 12000;
+  place('cc_mother', CENTER - 220, CENTER - 60);
+  place('cc_two', CENTER + 170, CENTER - 210);
+  place('cc_3am', CENTER + 320, CENTER - 20);
+  place('cc_tired', CENTER - 120, CENTER + 200);
+  place('cc_2am', CENTER + 40, CENTER + 330);
+  place('cc_gentle', CENTER + 360, CENTER + 250);
+  place('cc_job', CENTER + 200, CENTER + 90);
+  place('cc_margins', CENTER - 330, CENTER + 80);
+
+  return objects;
+}
+
+/** Corridor content in server `SeedPayload` rows for the `seedConfessions` reducer. */
+export function buildConfessionSeedPayloads(): SeedPayload[] {
+  return buildConfessionSeedObjects().map(toPayload);
 }
 
 /**
@@ -325,7 +397,11 @@ export function seedWallIfNeeded(): void {
  * creates and edits.
  */
 export function buildSeedPayloads(): SeedPayload[] {
-  return buildSeedObjects().map((o) => ({
+  return buildSeedObjects().map(toPayload);
+}
+
+function toPayload(o: WallObject): SeedPayload {
+  return {
     id: o.id,
     objectType: o.type,
     x: Math.round(o.x),
@@ -341,7 +417,15 @@ export function buildSeedPayloads(): SeedPayload[] {
     protected: true,
     ttlMicros: o.expiresAt && o.createdAt ? BigInt(o.expiresAt - o.createdAt) * 1000n : 0n,
     ageMicros: BigInt(Date.now() - o.createdAt) * 1000n,
-  }));
+  };
+}
+
+/** Lay the corridor's authored confessions into an already-seeded local wall. */
+function seedCorridorIfNeeded(): void {
+  if (localStorage.getItem(CORRIDOR_SEED_MARKER)) return;
+  const existing = loadObjects();
+  saveObjects([...existing, ...buildConfessionSeedObjects()]);
+  localStorage.setItem(CORRIDOR_SEED_MARKER, '1');
 }
 
 /** Return an approximate camera position for the initial view (looks at the cluster). */

@@ -18,6 +18,7 @@ const VALID_OBJECT_TYPES = new Set([
   'image',
   'secret',
   'timecapsule',
+  'confession',
 ]);
 
 const ObjectData = t.object('ObjectData', {
@@ -112,6 +113,9 @@ const canvas_object = table(
     revealed: t.bool(),
     authorName: t.option(t.string()),
     parentId: t.option(t.string()),
+    // Moderation floor. Hiding is scoped to the confession corridor; hidden
+    // rows leave every client's cache (filtered client-side on upsert).
+    hidden: t.bool().default(false),
   }
 );
 
@@ -134,6 +138,7 @@ const comment = table(
     userIdentity: t.identity(),
     text: t.string(),
     createdAt: t.timestamp(),
+    hidden: t.bool().default(false),
   }
 );
 
@@ -359,46 +364,65 @@ const SeedPayload = t.object('SeedPayload', {
   ageMicros: t.u64(),
 });
 
+// One seed pass per seed_state row id. The main wall uses id 1, the confession
+// corridor uses id 2 — so a fresh corridor adds curated content to a database
+// whose main wall was already seeded without re-running (and duplicating) it.
+function applySeeds(
+  ctx: Ctx,
+  objects: Parameters<typeof seedObjects>[1]['objects'],
+  rowId: number,
+) {
+  const existing = ctx.db.seed_state.id.find(rowId);
+  if (existing) return;
+  ctx.db.seed_state.insert({ id: rowId, seeded: true });
+
+  for (const seed of objects) {
+    if (!VALID_OBJECT_TYPES.has(seed.objectType)) {
+      throw new SenderError('unknown object type');
+    }
+    const created = new Timestamp(ctx.timestamp.microsSinceUnixEpoch - seed.ageMicros);
+    const ttl = seed.ttlMicros;
+    const keptForever = ttl === 0n;
+    if (!keptForever && ttl < 0n) {
+      throw new SenderError('invalid ttl');
+    }
+    ctx.db.canvas_object.insert({
+      id: seed.id,
+      objectType: seed.objectType,
+      x: seed.x,
+      y: seed.y,
+      rotation: seed.rotation,
+      scaleX: seed.scaleX,
+      scaleY: seed.scaleY,
+      width: seed.width,
+      height: seed.height,
+      data: seed.data,
+      createdBy: ctx.sender,
+      createdAt: created,
+      expiresAt: keptForever ? undefined : new Timestamp(created.microsSinceUnixEpoch + ttl),
+      ghostUntil: undefined,
+      keptForever,
+      protected: seed.protected,
+      revealed: false,
+      authorName: seed.authorName,
+      parentId: seed.parentId,
+      hidden: false,
+    });
+    bumpCreated(ctx, keptForever);
+  }
+}
+
 export const seedObjects = spacetimedb.reducer(
   { objects: t.array(SeedPayload) },
   (ctx, { objects }) => {
-    const existing = ctx.db.seed_state.id.find(1);
-    if (existing) return;
-    ctx.db.seed_state.insert({ id: 1, seeded: true });
+    applySeeds(ctx, objects, 1);
+  }
+);
 
-    for (const seed of objects) {
-      if (!VALID_OBJECT_TYPES.has(seed.objectType)) {
-        throw new SenderError('unknown object type');
-      }
-      const created = new Timestamp(ctx.timestamp.microsSinceUnixEpoch - seed.ageMicros);
-      const ttl = seed.ttlMicros;
-      const keptForever = ttl === 0n;
-      if (!keptForever && ttl < 0n) {
-        throw new SenderError('invalid ttl');
-      }
-      ctx.db.canvas_object.insert({
-        id: seed.id,
-        objectType: seed.objectType,
-        x: seed.x,
-        y: seed.y,
-        rotation: seed.rotation,
-        scaleX: seed.scaleX,
-        scaleY: seed.scaleY,
-        width: seed.width,
-        height: seed.height,
-        data: seed.data,
-        createdBy: ctx.sender,
-        createdAt: created,
-        expiresAt: keptForever ? undefined : new Timestamp(created.microsSinceUnixEpoch + ttl),
-        ghostUntil: undefined,
-        keptForever,
-        protected: seed.protected,
-        revealed: false,
-        authorName: seed.authorName,
-        parentId: seed.parentId,
-      });
-      bumpCreated(ctx, keptForever);
-    }
+export const seedConfessions = spacetimedb.reducer(
+  { objects: t.array(SeedPayload) },
+  (ctx, { objects }) => {
+    applySeeds(ctx, objects, 2);
   }
 );
 
@@ -448,6 +472,7 @@ export const createObject = spacetimedb.reducer(
       revealed: false,
       authorName: undefined,
       parentId: args.parentId,
+      hidden: false,
     });
     bumpCreated(ctx, keptForever);
     if (!keptForever) {
@@ -618,9 +643,31 @@ export const addComment = spacetimedb.reducer(
       userIdentity: ctx.sender,
       text: trimmed,
       createdAt: ctx.timestamp,
+      hidden: false,
     });
   }
 );
+
+// Confession-corridor moderation floor: one click hides a mark or a reply for
+// everyone (rows leave client caches via the hidden filter on upsert). Scoped
+// to confession objects so the main wall's art can't be fought over.
+export const hideObject = spacetimedb.reducer({ id: t.string() }, (ctx, { id }) => {
+  const obj = requireObject(ctx, id);
+  if (obj.objectType !== 'confession') {
+    throw new SenderError('only confession-zone marks can be hidden');
+  }
+  ctx.db.canvas_object.id.update({ ...obj, hidden: true });
+});
+
+export const hideComment = spacetimedb.reducer({ id: t.u64() }, (ctx, { id }) => {
+  const c = ctx.db.comment.id.find(id);
+  if (!c) throw new SenderError('comment not found');
+  const parent = ctx.db.canvas_object.id.find(c.objectId);
+  if (!parent || parent.objectType !== 'confession') {
+    throw new SenderError('only confession-zone replies can be hidden');
+  }
+  ctx.db.comment.id.update({ ...c, hidden: true });
+});
 
 export const setUsername = spacetimedb.reducer(
   { username: t.string(), avatar: t.option(t.string()), bio: t.option(t.string()) },

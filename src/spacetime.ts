@@ -153,7 +153,15 @@ export class SpacetimeBackend implements StorageBackend {
     });
 
     builder.onConnectError((_ctx, error) => {
-      this.setState('disconnected', error?.message || 'cannot reach server');
+      const msg = error?.message || 'cannot reach server';
+      this.setState('disconnected', msg);
+      // An invalid/stale token for this database is unrecoverable — drop it so
+      // the next attempt reconnects anonymously with a fresh identity.
+      if (/unauthor|token|verify|forbidden/i.test(msg)) {
+        localStorage.removeItem(this.tokenKey());
+        localStorage.removeItem('spacetime_identity');
+        this.attempts = 0;
+      }
       this.scheduleReconnect();
     });
 
@@ -166,7 +174,13 @@ export class SpacetimeBackend implements StorageBackend {
       const conn = builder.build();
       this.conn = conn;
     } catch (error) {
-      this.setState('disconnected', error instanceof Error ? error.message : 'failed to connect');
+      const msg = error instanceof Error ? error.message : 'failed to connect';
+      this.setState('disconnected', msg);
+      if (/unauthor|token|verify|forbidden/i.test(msg)) {
+        localStorage.removeItem(this.tokenKey());
+        localStorage.removeItem('spacetime_identity');
+        this.attempts = 0;
+      }
       this.scheduleReconnect();
     }
   }
@@ -262,6 +276,15 @@ export class SpacetimeBackend implements StorageBackend {
   }
 
   private onCommentUpsert(row: CommentRow): void {
+    // Moderation floor: a hidden reply is dropped from the client immediately.
+    if (row.hidden) {
+      const list = this.comments.get(row.objectId) ?? [];
+      const kept = list.filter(r => r.id !== row.id);
+      if (kept.length) this.comments.set(row.objectId, kept);
+      else this.comments.delete(row.objectId);
+      this.scheduleSync();
+      return;
+    }
     const list = (this.comments.get(row.objectId) ?? []).filter(r => r.id !== row.id);
     list.push(row);
     if (list.length) this.comments.set(row.objectId, list);
@@ -292,6 +315,17 @@ export class SpacetimeBackend implements StorageBackend {
 
   private onCanvasUpsert(row: CanvasObject): void {
     this.pendingAdds.delete(row.id);
+    // Moderation floor: hidden marks are dropped from the client cache at once,
+    // so they never render and react/comment traces vanish with them.
+    if (row.hidden) {
+      this.canvasRows.delete(row.id);
+      this.objs.delete(row.id);
+      this.reactions.delete(row.id);
+      this.comments.delete(row.id);
+      this.history.delete(row.id);
+      this.scheduleSync();
+      return;
+    }
     this.canvasRows.set(row.id, row);
     this.scheduleSync();
   }
@@ -311,6 +345,7 @@ export class SpacetimeBackend implements StorageBackend {
       .onApplied(() => {
         this.baseApplied = true;
         this.maybeSeed();
+        this.scheduleSync();
       })
       .subscribe([tables.user, tables.reaction, tables.comment, tables.objectHistory, tables.wallStats, tables.cursor]);
   }
@@ -331,6 +366,7 @@ export class SpacetimeBackend implements StorageBackend {
       .onApplied(() => {
         this.canvasApplied = true;
         this.maybeSeed();
+        this.scheduleSync();
         if (previous) {
           try {
             previous.unsubscribe();
@@ -348,7 +384,10 @@ export class SpacetimeBackend implements StorageBackend {
     this.seededSent = true;
     // Dynamic import avoids a static cycle with seed.ts -> canvas.ts -> storage.ts.
     void import('./seed')
-      .then((m) => this.sendSeeds(m.buildSeedPayloads))
+      .then((m) => {
+        this.sendSeeds(m.buildSeedPayloads);
+        this.sendCorridorSeeds(m.buildConfessionSeedPayloads);
+      })
       .catch(() => {});
   }
 
@@ -356,6 +395,15 @@ export class SpacetimeBackend implements StorageBackend {
     if (!this.conn) return;
     try {
       void this.conn.reducers.seedObjects({ objects: buildSeedPayloads() }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private sendCorridorSeeds(buildConfessionSeedPayloads: () => SeedPayload[]): void {
+    if (!this.conn) return;
+    try {
+      void this.conn.reducers.seedConfessions({ objects: buildConfessionSeedPayloads() }).catch(() => {});
     } catch {
       /* ignore */
     }
@@ -385,6 +433,7 @@ export class SpacetimeBackend implements StorageBackend {
       .slice()
       .sort((a, b) => Number(a.createdAt.microsSinceUnixEpoch - b.createdAt.microsSinceUnixEpoch))
       .map(c => ({
+        id: c.id.toString(),
         user: users.get(c.userIdentity.toHexString())?.username ?? 'guest',
         text: c.text,
         createdAt: microsToMs(c.createdAt),
@@ -549,6 +598,36 @@ export class SpacetimeBackend implements StorageBackend {
         this.objs.set(id, had);
         this.scheduleSync();
       }
+    }
+  }
+
+  hideObject(objectId: string): void {
+    const had = this.objs.get(objectId);
+    this.objs.delete(objectId);
+    this.pendingAdds.delete(objectId);
+    this.scheduleSync();
+    if (!this.conn) return;
+    try {
+      void this.conn.reducers.hideObject({ id: objectId }).catch(() => {
+        if (had && !this.canvasRows.has(objectId)) {
+          this.objs.set(objectId, had);
+          this.scheduleSync();
+        }
+      });
+    } catch {
+      if (had) {
+        this.objs.set(objectId, had);
+        this.scheduleSync();
+      }
+    }
+  }
+
+  hideComment(commentId: string): void {
+    if (!this.conn) return;
+    try {
+      void this.conn.reducers.hideComment({ id: BigInt(commentId) }).catch(() => {});
+    } catch {
+      /* ignore */
     }
   }
 

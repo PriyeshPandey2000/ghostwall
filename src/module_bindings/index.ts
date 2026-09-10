@@ -39,8 +39,11 @@ import AddReactionReducer from "./add_reaction_reducer";
 import CreateObjectReducer from "./create_object_reducer";
 import DeleteObjectReducer from "./delete_object_reducer";
 import DrawOverReducer from "./draw_over_reducer";
+import HideCommentReducer from "./hide_comment_reducer";
+import HideObjectReducer from "./hide_object_reducer";
 import RecomputeWallStatsReducer from "./recompute_wall_stats_reducer";
 import RemoveReactionReducer from "./remove_reaction_reducer";
+import SeedConfessionsReducer from "./seed_confessions_reducer";
 import SeedObjectsReducer from "./seed_objects_reducer";
 import SetHomeReducer from "./set_home_reducer";
 import SetUsernameReducer from "./set_username_reducer";
@@ -165,8 +168,11 @@ const reducersSchema = __reducers(
   __reducerSchema("create_object", CreateObjectReducer),
   __reducerSchema("delete_object", DeleteObjectReducer),
   __reducerSchema("draw_over", DrawOverReducer),
+  __reducerSchema("hide_comment", HideCommentReducer),
+  __reducerSchema("hide_object", HideObjectReducer),
   __reducerSchema("recompute_wall_stats", RecomputeWallStatsReducer),
   __reducerSchema("remove_reaction", RemoveReactionReducer),
+  __reducerSchema("seed_confessions", SeedConfessionsReducer),
   __reducerSchema("seed_objects", SeedObjectsReducer),
   __reducerSchema("set_home", SetHomeReducer),
   __reducerSchema("set_username", SetUsernameReducer),

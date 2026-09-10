@@ -52,6 +52,10 @@ export interface StorageBackend {
   unreact(objectId: string, emoji: string): void;
   comment(objectId: string, text: string): void;
   drawOver(objectId: string): void;
+  /** One-click moderation floor for the Confession Corridor (mark or reply).
+   *  Local mode removes it for real; the shared backend hides it from everyone. */
+  hideObject?(objectId: string): void;
+  hideComment?(commentId: string): void;
   onObjectsChanged(cb: (objects: WallObject[]) => void): void;
   onStateChanged(cb: (state: ConnectionState, detail?: string) => void): void;
   onProfileChanged(cb: (profile: UserProfile) => void): void;
@@ -83,6 +87,14 @@ function writeJSON(key: string, value: unknown): void {
   } catch {
     /* quota / private mode — best effort only */
   }
+}
+
+/** A locally-unique comment id (the shared backend uses the server's u64 row id). */
+function newLocalCommentId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `c_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
 export class LocalStorageBackend implements StorageBackend {
@@ -176,8 +188,28 @@ export class LocalStorageBackend implements StorageBackend {
     const obj = objects.find(o => o.id === objectId);
     if (!obj) return;
     const profile = this.loadUserProfile();
-    const comments = [...(obj.comments || []), { user: profile?.username || 'guest', text, createdAt: Date.now() }];
+    const comments = [...(obj.comments || []), {
+      id: newLocalCommentId(),
+      user: profile?.username || 'guest',
+      text,
+      createdAt: Date.now(),
+    }];
     this.updateObject(objectId, { comments });
+  }
+
+  hideObject(objectId: string): void {
+    this.removeObject(objectId);
+  }
+
+  hideComment(commentId: string): void {
+    const objects = this.loadObjects();
+    let changed = false;
+    const next = objects.map(o => {
+      if (!o.comments.some(c => c.id === commentId)) return o;
+      changed = true;
+      return { ...o, comments: o.comments.filter(c => c.id !== commentId) };
+    });
+    if (changed) this.saveObjects(next);
   }
 
   drawOver(objectId: string): void {
@@ -253,6 +285,14 @@ export function addComment(objectId: string, text: string): void {
 
 export function drawOverObject(objectId: string): void {
   activeBackend.drawOver(objectId);
+}
+
+export function hideObject(objectId: string): void {
+  activeBackend.hideObject?.(objectId);
+}
+
+export function hideComment(commentId: string): void {
+  activeBackend.hideComment?.(commentId);
 }
 
 export function loadUserProfile(): UserProfile | null {

@@ -1,6 +1,6 @@
 export interface WallObject {
   id: string;
-  type: 'stroke' | 'text' | 'shape' | 'sticker' | 'image' | 'secret' | 'timecapsule';
+  type: 'stroke' | 'text' | 'shape' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'confession';
   x: number;
   y: number;
   data: Record<string, unknown>;
@@ -23,6 +23,7 @@ export interface Reaction {
 }
 
 export interface Comment {
+  id: string;
   user: string;
   text: string;
   createdAt: number;

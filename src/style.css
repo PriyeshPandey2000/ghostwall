@@ -280,6 +280,30 @@ html, body {
   background: var(--bg-light);
 }
 
+.btn-tertiary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 30px;
+  background: rgba(120, 90, 180, 0.14);
+  color: var(--text-dim);
+  border: 1px solid rgba(190, 160, 240, 0.3);
+  border-radius: 60px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+}
+
+.btn-tertiary:hover {
+  border-color: rgba(190, 160, 240, 0.6);
+  background: rgba(120, 90, 180, 0.24);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgba(120, 90, 180, 0.25);
+}
+
 /* LIVE PREVIEW */
 .live-preview-section {
   padding: 60px 40px 80px;
@@ -593,6 +617,48 @@ html, body {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.places-wrap {
+  position: relative;
+}
+
+.places-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 6px;
+  gap: 2px;
+  background: rgba(20, 20, 20, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  z-index: 160;
+}
+
+.places-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.places-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }
 
 .top-btn {
@@ -1226,7 +1292,7 @@ html, body {
     align-items: center;
   }
 
-  .btn-primary, .btn-secondary {
+  .btn-primary, .btn-secondary, .btn-tertiary {
     width: 100%;
     max-width: 280px;
     justify-content: center;
@@ -1441,6 +1507,25 @@ html, body {
 }
 .oi-action.primary:hover {
   background: rgba(255,77,77,0.2);
+}
+.oi-action.danger {
+  background: rgba(255, 140, 90, 0.08);
+  border-color: rgba(255, 140, 90, 0.28);
+  color: var(--text-dim);
+}
+.oi-action.danger:hover {
+  background: rgba(255, 140, 90, 0.16);
+  color: var(--text);
+}
+.comment-hide {
+  float: right;
+  font-size: 12px;
+  opacity: 0.35;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.comment-hide:hover {
+  opacity: 1;
 }
 .oi-meta {
   display: flex;

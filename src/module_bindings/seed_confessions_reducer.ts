@@ -10,11 +10,12 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  id: __t.u64().primaryKey(),
-  objectId: __t.string().name("object_id"),
-  userIdentity: __t.identity().name("user_identity"),
-  text: __t.string(),
-  createdAt: __t.timestamp().name("created_at"),
-  hidden: __t.bool(),
-});
+import {
+  SeedPayload,
+} from "./types";
+
+export default {
+  get objects() {
+    return __t.array(SeedPayload);
+  },
+};

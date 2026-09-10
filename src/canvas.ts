@@ -5,7 +5,7 @@ import { loadObjects, saveObjects, addObject, removeObject, updateObject, loadUs
 import type { WallObject } from './types';
 import { DURATION_MS, GHOST_MS } from './types';
 
-export type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'react';
+export type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'confession' | 'react';
 
 export interface CanvasEngineOptions {
   container: HTMLDivElement;
@@ -55,13 +55,53 @@ export function strokeToPathData(points: { x: number; y: number }[], size: numbe
   return getSvgPathFromStroke(outline);
 }
 
+/** URL-encode an SVG into a CSS cursor value with a hotspot and a fallback. */
+function svgCursor(svg: string, x: number, y: number, fallback: string = 'default'): string {
+  return `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}") ${x} ${y}, ${fallback}`;
+}
+
+// Pencil cursor (tip points down, hotspot on the tip).
+const PENCIL_CURSOR = svgCursor(`
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <defs><filter id="s" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="1.5" stdDeviation="1.3" flood-color="#000" flood-opacity="0.45"/></filter></defs>
+  <g filter="url(#s)">
+    <rect x="10" y="5" width="12" height="4" rx="1" fill="#f26d92"/>
+    <rect x="10" y="9" width="12" height="3" fill="#c9c9c9"/>
+    <path d="M10 12 L22 12 L22 20 L10 20 Z" fill="#f6c85c"/>
+    <path d="M10 20 L22 20 L15 28 Z" fill="#dda847"/>
+    <path d="M13.4 22 L16.6 22 L15 28 Z" fill="#444"/>
+  </g>
+</svg>`, 15, 27, 'crosshair');
+
+// Eraser cursor.
+const ERASER_CURSOR = svgCursor(`
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+  <defs><filter id="s" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="1.5" stdDeviation="1.3" flood-color="#000" flood-opacity="0.45"/></filter></defs>
+  <g filter="url(#s)" transform="rotate(-15 15 15)">
+    <rect x="5" y="7" width="20" height="16" rx="3" fill="#ff8fa3"/>
+    <rect x="5" y="7" width="20" height="5" fill="#f65a83"/>
+    <rect x="5" y="13" width="20" height="2.2" fill="#fff" opacity="0.55"/>
+    <rect x="13" y="12.2" width="4" height="10.8" rx="1" fill="#c7f0ff"/>
+    <path d="M6 23 L24 23 L21.5 27.5 L8.5 27.5 Z" fill="#e05a74"/>
+  </g>
+</svg>`, 15, 15);
+
+/** World coords + footprint of the Confession Corridor region. Shared by the
+ *  room's ambient background (drawCorridor), Places navigation in wall.ts, and
+ *  the seed layout in seed.ts (which keeps its own copy of the center). */
+export const CORRIDOR = {
+  cx: 12000,
+  cy: 12000,
+  half: 600, // half-width of the ambient "room" drawn around the cluster
+};
+
 export class CanvasEngine {
   private stage: Konva.Stage;
   private mainLayer: Konva.Layer;
   private gridLayer: Konva.Layer;
   private uiLayer: Konva.Layer;
   private container: HTMLDivElement;
-  private currentTool: Tool = 'draw';
+  private currentTool: Tool = 'select';
   private currentColor: string = '#ff4d4d';
   private strokeWidth: number = 3;
   private isDrawing: boolean = false;
@@ -145,8 +185,8 @@ export class CanvasEngine {
       this.stage.position({ x: this.stage.width() / 2, y: this.stage.height() / 2 });
     }
 
-    // We start in Draw mode, so the stage is not draggable (drag draws).
-    // setTool() toggles dragging only for the Select tool (pan by empty-space drag).
+    // Default to the Pan & select tool, so the canvas is draggable from the
+    // first frame; the toolbar switches into the drawing tools.
     this.stage.draggable(this.currentTool === 'select');
     this.stage.container().style.cursor = this.getCursorForTool(this.currentTool);
 
@@ -296,7 +336,7 @@ export class CanvasEngine {
     if (this.currentTool === 'select' || this.currentTool === 'react') return;
     // Prevent the browser from moving focus away from a newly created text
     // input overlay (otherwise the overlay blurs + auto-closes immediately).
-    if (this.currentTool === 'text' || this.currentTool === 'secret') {
+    if (this.currentTool === 'text' || this.currentTool === 'secret' || this.currentTool === 'confession') {
       e.evt.preventDefault();
     }
 
@@ -313,6 +353,10 @@ export class CanvasEngine {
 
       case 'text':
         this.placeText(pos);
+        break;
+
+      case 'confession':
+        this.placeConfession(pos);
         break;
 
       case 'rect':
@@ -604,6 +648,79 @@ export class CanvasEngine {
     });
   }
 
+  private placeConfession(pos: { x: number; y: number }): void {
+    const scale = this.stage.scaleX();
+    const overlay = document.createElement('div');
+    overlay.className = 'text-input-overlay confession-input';
+    overlay.style.left = `${(pos.x * scale) + this.stage.x()}px`;
+    overlay.style.top = `${(pos.y * scale) + this.stage.y()}px`;
+
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = 'Write what you can’t say anywhere else...';
+    textarea.style.color = '#cfc3ec';
+    textarea.style.borderColor = 'rgba(190, 160, 240, 0.45)';
+    textarea.style.fontSize = `${16 / scale}px`;
+    overlay.appendChild(textarea);
+    document.body.appendChild(overlay);
+
+    textarea.focus();
+
+    const commit = () => {
+      const text = textarea.value.trim();
+      if (text) {
+        this.saveUndoState();
+        const id = generateId();
+        const wallObj: WallObject = {
+          id,
+          type: 'confession',
+          x: pos.x,
+          y: pos.y,
+          data: { text, color: '#cfc3ec', fontSize: 16 / scale },
+          author: loadUserProfile()?.username || 'anonymous',
+          createdAt: Date.now(),
+          // Confessions stay forever — the corridor is the one place on the
+          // wall where something meant to be held onto doesn't fade.
+          expiresAt: null,
+          ghostUntil: null,
+          keptForever: true,
+          reactions: [],
+          comments: [],
+          parentId: null,
+          modifiedBy: [],
+        };
+
+        const konvaText = new Konva.Text({
+          x: pos.x,
+          y: pos.y,
+          text,
+          fontSize: 16 / scale,
+          fontFamily: 'Space Mono, monospace',
+          fill: '#cfc3ec',
+          id,
+        });
+        this.mainLayer.add(konvaText);
+        this.konvaObjects.set(id, konvaText);
+        this.boundNodeMap.set(konvaText as unknown as Konva.Node, wallObj);
+        this.makeObjectsDraggable(konvaText as unknown as Konva.Node, wallObj);
+        addObject(wallObj);
+        this.objects.push(wallObj);
+      }
+      overlay.remove();
+    };
+
+    textarea.addEventListener('blur', commit);
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        textarea.blur();
+      }
+      if (e.key === 'Escape') {
+        textarea.value = '';
+        textarea.blur();
+      }
+    });
+  }
+
   private placeSticker(pos: { x: number; y: number }): void {
     const stickers = ['🐸', '🚀', '💀', '👽', '🔥', '⭐', '❤️', '🎨', '🌈', '👾', '🎯', '🔮', '🎪', '🦄', '🍕', '⚡'];
     const sticker = stickers[Math.floor(Math.random() * stickers.length)];
@@ -816,7 +933,68 @@ export class CanvasEngine {
 
   private drawGrid(): void {
     this.gridLayer.destroyChildren();
+    this.drawCorridor();
     this.gridLayer.batchDraw();
+  }
+
+  /** The Confession Corridor's ambient floor: a faint, candlelit room drawn in
+   *  world space on the layer underneath the marks, so it pans and zooms with
+   *  the wall. Listening is off everywhere — this is scenery, never a target. */
+  private drawCorridor(): void {
+    const { cx, cy, half } = CORRIDOR;
+    const x = cx - half;
+    const y = cy - half;
+    const w = half * 2;
+    const h = half * 2;
+
+    const floor = new Konva.Rect({
+      x,
+      y,
+      width: w,
+      height: h,
+      listening: false,
+      fillRadialGradient: {
+        x: cx,
+        y: cy,
+        innerRadius: 0,
+        outerRadius: half * 1.5,
+        colorStops: [
+          0, 'rgba(120, 90, 180, 0.18)',
+          0.55, 'rgba(120, 90, 180, 0.09)',
+          1, 'rgba(120, 90, 180, 0.0)',
+        ],
+      },
+    });
+    const border = new Konva.Rect({
+      x: x + 90,
+      y: y + 90,
+      width: w - 180,
+      height: h - 180,
+      listening: false,
+      stroke: 'rgba(190, 160, 240, 0.22)',
+      strokeWidth: 2,
+      dash: [6, 8],
+      cornerRadius: 24,
+    });
+    const title = new Konva.Text({
+      x: x + 110,
+      y: y + 34,
+      text: '🕯️ Confession Corridor',
+      fontSize: 30,
+      fontFamily: 'Space Mono, monospace',
+      fill: 'rgba(205, 185, 245, 0.55)',
+      listening: false,
+    });
+    const sub = new Konva.Text({
+      x: x + 114,
+      y: y + 78,
+      text: 'say what you never could. it stays.',
+      fontSize: 16,
+      fontFamily: 'Space Mono, monospace',
+      fill: 'rgba(205, 185, 245, 0.35)',
+      listening: false,
+    });
+    this.gridLayer.add(floor, border, title, sub);
   }
 
   private loadSavedObjects(): void {
@@ -848,6 +1026,19 @@ export class CanvasEngine {
           id: obj.id,
         });
         node = text;
+        break;
+      }
+      case 'confession': {
+        const cd = obj.data as { text: string; color: string; fontSize: number };
+        node = new Konva.Text({
+          x: obj.x,
+          y: obj.y,
+          text: cd.text,
+          fontSize: cd.fontSize,
+          fontFamily: 'Space Mono, monospace',
+          fill: cd.color || '#cfc3ec',
+          id: obj.id,
+        });
         break;
       }
       case 'shape': {
@@ -1144,28 +1335,48 @@ export class CanvasEngine {
     this.mainLayer.batchDraw();
   }
 
-  teleportTo(x: number, y: number, zoom: number = 1): void {
+  teleportTo(x: number, y: number, zoom: number = 1, instant = false): void {
     const stageWidth = this.stage.width();
     const stageHeight = this.stage.height();
+    const targetX = stageWidth / 2 - x * zoom;
+    const targetY = stageHeight / 2 - y * zoom;
+    if (instant || document.hidden) {
+      // Instant arrivals must not depend on requestAnimationFrame: an occluded
+      // or background tab freezes it and would leave a tween forever unfinished
+      // (e.g. a deep link opened in a new background tab).
+      this.stage.position({ x: targetX, y: targetY });
+      this.stage.scale({ x: zoom, y: zoom });
+      this.options.onZoomChange?.(zoom);
+      this.drawGrid();
+      this.saveViewport();
+      return;
+    }
     this.stage.to({
-      x: stageWidth / 2 - x * zoom,
-      y: stageHeight / 2 - y * zoom,
+      x: targetX,
+      y: targetY,
       scaleX: zoom,
       scaleY: zoom,
       duration: 0.8,
       easing: Konva.Easings.EaseInOut,
+      onFinish: () => {
+        this.options.onZoomChange?.(zoom);
+        this.drawGrid();
+      },
     });
     setTimeout(() => this.saveViewport(), 900);
   }
 
   teleportRandom(): { obj: WallObject | undefined; found: boolean } {
-    if (this.objects.length === 0) {
+    // The Confession Corridor is deliberately excluded from random discovery —
+    // its marks are found by choosing to go there, never stumble-upon.
+    const pool = this.objects.filter(o => o.type !== 'confession');
+    if (pool.length === 0) {
       const x = (Math.random() - 0.5) * 12000;
       const y = (Math.random() - 0.5) * 12000;
       this.teleportTo(x, y, 0.6);
       return { obj: undefined, found: false };
     }
-    const obj = this.objects[Math.floor(Math.random() * this.objects.length)];
+    const obj = pool[Math.floor(Math.random() * pool.length)];
     const node = this.konvaObjects.get(obj.id);
     if (node) {
       const bounds = node.getClientRect();
@@ -1210,12 +1421,19 @@ export class CanvasEngine {
 
   private getCursorForTool(tool: Tool): string {
     switch (tool) {
-      case 'draw': return 'crosshair';
-      case 'erase': return 'cell';
-      case 'text': return 'text';
+      case 'draw': return PENCIL_CURSOR;
+      case 'erase': return ERASER_CURSOR;
+      case 'text':
+      case 'confession': return 'text';
       case 'react': return 'pointer';
       case 'select': return 'grab';
-      default: return 'crosshair';
+      case 'rect':
+      case 'circle': return 'crosshair';
+      case 'sticker':
+      case 'image':
+      case 'secret':
+      case 'timecapsule': return 'copy';
+      default: return 'default';
     }
   }
 

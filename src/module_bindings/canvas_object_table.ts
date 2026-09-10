@@ -36,4 +36,5 @@ export default __t.row({
   revealed: __t.bool(),
   authorName: __t.option(__t.string()).name("author_name"),
   parentId: __t.option(__t.string()).name("parent_id"),
+  hidden: __t.bool(),
 });

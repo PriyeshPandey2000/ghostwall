@@ -32,6 +32,7 @@ export const CanvasObject = __t.object("CanvasObject", {
   revealed: __t.bool(),
   authorName: __t.option(__t.string()),
   parentId: __t.option(__t.string()),
+  hidden: __t.bool(),
 });
 export type CanvasObject = __Infer<typeof CanvasObject>;
 
@@ -41,6 +42,7 @@ export const Comment = __t.object("Comment", {
   userIdentity: __t.identity(),
   text: __t.string(),
   createdAt: __t.timestamp(),
+  hidden: __t.bool(),
 });
 export type Comment = __Infer<typeof Comment>;
 

@@ -69,6 +69,7 @@ export function renderLanding(container: HTMLElement): void {
           <div class="hero-ctas">
             <a href="#/wall" class="btn-primary">Enter the wall →</a>
             <a href="#/wall?explore=true" class="btn-secondary">See what people left</a>
+            <a href="#/wall?place=confession" class="btn-tertiary">🕯️ Visit the Confession Corridor</a>
           </div>
         </div>
       </section>

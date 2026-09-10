@@ -1,9 +1,15 @@
-import { CanvasEngine } from './canvas';
+import { CanvasEngine, CORRIDOR } from './canvas';
 import { seedWallIfNeeded } from './seed';
 import {
+  addComment,
+  addReaction,
+  drawOverObject,
   getMyHome,
+  hideComment,
+  hideObject,
   isSpacetime,
   loadUserProfile,
+  removeReaction,
   saveUserProfile,
   sendCursor,
   setHome,
@@ -15,22 +21,23 @@ import {
 import { formatTimeAgo, formatTimeLeft, getRandomUsername } from './utils';
 import type { WallObject } from './types';
 
-type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'react';
+type Tool = 'select' | 'draw' | 'erase' | 'text' | 'rect' | 'circle' | 'sticker' | 'image' | 'secret' | 'timecapsule' | 'confession' | 'react';
 
 // All tools live in one horizontal bar — no hidden submenu. The four verbs that
 // matter on a first visit come first; the rest follow in the same row.
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
+  { id: 'select', icon: '✋', label: 'Pan & select' },
   { id: 'draw', icon: '✏️', label: 'Draw' },
   { id: 'text', icon: 'Aa', label: 'Text' },
   { id: 'erase', icon: '🧽', label: 'Erase' },
   { id: 'react', icon: '❤️', label: 'React' },
-  { id: 'select', icon: '🖱️', label: 'Select & pan' },
-  { id: 'sticker', icon: '🎨', label: 'Sticker' },
+  { id: 'sticker', icon: '😀', label: 'Sticker' },
   { id: 'rect', icon: '▭', label: 'Rectangle' },
   { id: 'circle', icon: '◯', label: 'Circle' },
   { id: 'image', icon: '🖼️', label: 'Image' },
   { id: 'secret', icon: '🤫', label: 'Secret' },
   { id: 'timecapsule', icon: '🔒', label: 'Time capsule' },
+  { id: 'confession', icon: '🕯️', label: 'Confession' },
 ];
 
 const COLORS = [
@@ -42,7 +49,17 @@ const COLORS = [
 
 const EMOJI_REACTIONS = ['❤️', '😂', '⭐', '👍', '😮', '🪐'];
 
-export function renderWall(container: HTMLElement, initial: { explore?: boolean; deepLink?: string }): void {
+// Calmer palette for marks left in the Confession Corridor.
+const CONFESSION_REACTIONS = ['🕯️', '❤️', '🫂', '💛', '🙏', '✨'];
+
+// Named places users can jump to from the top bar. Deliberately a hardcoded
+// client list (no DB table): the corridor earned a spot by existing.
+const PLACES: { id: string; name: string; tip: string; x: number; y: number; zoom: number }[] = [
+  { id: 'main', name: '🎨 Main Wall', tip: 'back at the main wall', x: 0, y: 0, zoom: 1 },
+  { id: 'confession', name: '🕯️ Confession Corridor', tip: 'the Confession Corridor — everything here stays 🕯️', x: CORRIDOR.cx, y: CORRIDOR.cy, zoom: 0.8 },
+];
+
+export function renderWall(container: HTMLElement, initial: { explore?: boolean; deepLink?: string; place?: string }): void {
   container.innerHTML = `
     <div class="canvas-page">
       <div class="canvas-container" id="canvas-container"></div>
@@ -57,6 +74,12 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
             <span class="online-dot"></span><span id="online-count">0</span> online
           </div>
           <div class="zoom-indicator" id="zoom-indicator">100%</div>
+          <div class="places-wrap">
+            <button class="top-btn" id="btn-places">🗺️ Places</button>
+            <div class="places-menu" id="places-menu" style="display:none">
+              ${PLACES.map(p => `<button class="places-option" data-place="${p.id}">${p.name}</button>`).join('')}
+            </div>
+          </div>
           <button class="top-btn accent" id="btn-explore">🔭 Explore</button>
         </div>
       </div>
@@ -67,7 +90,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
 
       <div class="toolbar" id="toolbar">
         ${TOOLS.map(t => `
-          <button class="tool-btn ${t.id === 'draw' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
+          <button class="tool-btn ${t.id === 'select' ? 'active' : ''}" data-tool="${t.id}" data-tooltip="${t.label}">
             <span>${t.icon}</span>
           </button>
         `).join('')}
@@ -119,6 +142,7 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     const NEARBY_RADIUS = 3000;
     subscribeObjects((objects) => {
       engine.syncObjects(objects);
+      patchOpenCounts(objects);
       if (knownIds === null) {
         knownIds = new Set(objects.map(o => o.id));
         return;
@@ -174,10 +198,16 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
   maybeShowOnboarding();
   maybeShowDrawHint();
 
-  // Handle deep links
+  // Handle deep links and named places
   if (initial.deepLink) {
     if (!engine.teleportToObjectId(initial.deepLink)) {
       showExplorerCTA();
+    }
+  } else if (initial.place) {
+    const place = PLACES.find(p => p.id === initial.place);
+    if (place) {
+      engine.teleportTo(place.x, place.y, place.zoom, true);
+      showDiscoveryMessage(place.tip);
     }
   } else if (initial.explore) {
     openDiscoveryPanel();
@@ -264,6 +294,31 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     document.getElementById('btn-profile')?.addEventListener('click', () => openProfilePanel(engineRef, profile));
     document.getElementById('btn-explore')?.addEventListener('click', openDiscoveryPanel);
     document.getElementById('btn-discover')?.addEventListener('click', () => doWeirdDiscovery(engineRef));
+
+    const placesWrap = document.querySelector('.places-wrap');
+    const placesMenu = document.getElementById('places-menu');
+    document.getElementById('btn-places')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!placesMenu) return;
+      closePanels();
+      placesMenu.style.display = placesMenu.style.display === 'none' ? '' : 'none';
+    });
+    placesMenu?.querySelectorAll('.places-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.place!;
+        const place = PLACES.find(p => p.id === id);
+        if (place) {
+          engineRef.teleportTo(place.x, place.y, place.zoom);
+          showDiscoveryMessage(place.tip);
+        }
+        if (placesMenu) placesMenu.style.display = 'none';
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (placesMenu && placesWrap && !placesWrap.contains(e.target as Node)) {
+        placesMenu.style.display = 'none';
+      }
+    });
   }
 
   /**
@@ -272,7 +327,9 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
    * it). This is the exploration hook that makes the wall feel alive.
    */
   function doWeirdDiscovery(engineRef: CanvasEngine): void {
-    const all = engineRef.getObjects();
+    // The Confession Corridor is a place you arrive at on purpose — weird
+    // discovery jumps everywhere on the wall except there.
+    const all = engineRef.getObjects().filter(o => o.type !== 'confession');
     if (all.length === 0) {
       showDiscoveryMessage('nothing here yet... go make the first mark');
       return;
@@ -527,13 +584,13 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     });
   }
 
-  /** One-time nudge that reveals the first action — you're already in Draw mode. */
+  /** One-time nudge that reveals the first actions — panning is on by default. */
   function maybeShowDrawHint(): void {
     if (localStorage.getItem('thewall_draw_hint')) return;
     localStorage.setItem('thewall_draw_hint', '1');
     const hint = document.createElement('div');
     hint.className = 'draw-hint';
-    hint.innerHTML = '✏️ Draw anywhere';
+    hint.innerHTML = '✋ Drag to explore the wall · ✏️ pick a tool to leave a mark';
     container.appendChild(hint);
     const dismiss = () => hint.remove();
     window.setTimeout(dismiss, 4000);
@@ -614,9 +671,12 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
 
     const isPermanent = obj.keptForever;
     const myObj = obj.id === findMyObject(obj);
+    const isConfession = obj.type === 'confession';
+    const reactionPool = isConfession ? CONFESSION_REACTIONS : EMOJI_REACTIONS;
 
     const popup = document.createElement('div');
     popup.className = 'object-info-popup';
+    popup.dataset.objectId = obj.id;
 
     let previewSrc = '';
     try { previewSrc = (node as unknown as { toDataURL: (o: object) => string }).toDataURL({ pixelRatio: 2 }); } catch { /* noop */ }
@@ -629,14 +689,16 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       </div>
       ${previewSrc ? `<img class="oi-preview" alt="" src="${previewSrc}" />` : `<div class="oi-preview">${getObjPreview(obj)}</div>`}
       <div class="oi-reactions">
-        ${EMOJI_REACTIONS.map(r => `
+        ${reactionPool.map(r => `
           <button class="oi-react-btn" data-emoji="${r}">${r} <span class="oi-count">${getReactionCount(obj, r)}</span></button>
         `).join('')}
       </div>
       <div class="oi-actions">
         <button class="oi-action primary" id="btn-draw-over">✏️ Draw over it</button>
+        ${isConfession ? '<button class="oi-action primary" id="btn-reply">💬 Reply</button>' : ''}
         <button class="oi-action primary" id="btn-share">🔗 Share</button>
         <button class="oi-action" id="btn-comment">💬</button>
+        ${isConfession ? '<button class="oi-action danger" id="btn-hide">🚩 Hide</button>' : ''}
         ${myObj ? `<button class="oi-action" id="btn-delete">🗑️</button>` : ''}
       </div>
       <div class="oi-meta">
@@ -692,31 +754,20 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       btn.addEventListener('click', () => {
         const emoji = (btn as HTMLElement).dataset.emoji!;
         const profile = loadUserProfile() || userProfile;
-        const reactions = [...obj.reactions];
-        const existingReaction = reactions.find(r => r.emoji === emoji);
-        if (existingReaction) {
-          if (existingReaction.user === profile.username) {
-            existingReaction.count = Math.max(0, existingReaction.count - 1);
-          } else {
-            existingReaction.count += 1;
-            existingReaction.user = profile.username;
-          }
-        } else {
-          reactions.push({ emoji, user: profile.username, count: 1 });
-        }
-        updateObject(obj.id, { reactions });
-        const updated = engine.getObjects().find(o => o.id === obj.id);
-        closePopup();
-        handleObjectSelected(updated || obj);
+        const current = obj.reactions?.find(r => r.emoji === emoji);
+        const removing = current?.user === profile.username;
+        if (removing) removeReaction(obj.id, emoji);
+        else addReaction(obj.id, emoji);
+        // Optimistic count; the next sync lands a moment later and corrects it.
+        const nextCount = Math.max(0, (current?.count ?? 0) + (removing ? -1 : 1));
+        const countEl = btn.querySelector('.oi-count');
+        if (countEl) countEl.textContent = String(nextCount);
       });
     });
 
     popup.querySelector('#btn-draw-over')?.addEventListener('click', () => {
       engine.setTool('draw');
-      const myProfile = loadUserProfile() || userProfile;
-      if (!obj.modifiedBy.includes(myProfile.username)) {
-        updateObject(obj.id, { modifiedBy: [...obj.modifiedBy, myProfile.username] });
-      }
+      drawOverObject(obj.id);
       closePopup();
       showDiscoveryMessage('Draw over it. Be the next artist.');
       // Give the toolbar's Draw button the active state.
@@ -727,6 +778,18 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     popup.querySelector('#btn-comment')?.addEventListener('click', () => {
       closePopup();
       openComments(obj);
+    });
+    // 💬 Reply is the confession's primary verb; it maps onto the same panel but
+    // reads as a reply to the corridor instead of a comment on the wall.
+    popup.querySelector('#btn-reply')?.addEventListener('click', () => {
+      closePopup();
+      openComments(obj, true);
+    });
+
+    popup.querySelector('#btn-hide')?.addEventListener('click', () => {
+      closePopup();
+      hideObject(obj.id);
+      showDiscoveryMessage('confession hidden from the corridor 🕯️');
     });
 
     popup.querySelector('#btn-share')?.addEventListener('click', () => {
@@ -759,8 +822,10 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
     const rect = node.getClientRect();
     const palette = document.createElement('div');
     palette.className = 'quick-react';
+    palette.dataset.objectId = obj.id;
+    const pool = obj.type === 'confession' ? CONFESSION_REACTIONS : EMOJI_REACTIONS;
     palette.innerHTML = `
-      ${EMOJI_REACTIONS.map(r => `
+      ${pool.map(r => `
         <button class="qr-btn" data-emoji="${r}" data-count="${getReactionCount(obj, r)}">
           ${r}<span class="qr-count">${getReactionCount(obj, r) || ''}</span>
         </button>
@@ -780,21 +845,12 @@ export function renderWall(container: HTMLElement, initial: { explore?: boolean;
       btn.addEventListener('click', () => {
         const emoji = (btn as HTMLElement).dataset.emoji!;
         const profile = loadUserProfile() || userProfile;
-        const reactions = [...obj.reactions];
-        const existingReaction = reactions.find(r => r.emoji === emoji);
-        if (existingReaction) {
-          if (existingReaction.user === profile.username) {
-            existingReaction.count = Math.max(0, existingReaction.count - 1);
-          } else {
-            existingReaction.count += 1;
-            existingReaction.user = profile.username;
-          }
-        } else {
-          reactions.push({ emoji, user: profile.username, count: 1 });
-        }
-updateObject(obj.id, { reactions });
+        const current = obj.reactions?.find(r => r.emoji === emoji);
+        const removing = current?.user === profile.username;
+        if (removing) removeReaction(obj.id, emoji);
+        else addReaction(obj.id, emoji);
         palette.remove();
-        showDiscoveryMessage(`${profile.avatar || ''} @${profile.username} reacted ${emoji}`);
+        showDiscoveryMessage(`${profile.avatar || ''} @${profile.username} ${removing ? `unreacted ${emoji}` : `reacted ${emoji}`}`);
       });
     });
   }
@@ -813,8 +869,31 @@ updateObject(obj.id, { reactions });
       case 'shape': return 'a shape';
       case 'stroke': return 'a drawing';
       case 'secret': return 'a secret 🤫';
+      case 'confession': return `"${obj.data.text}"`;
       case 'timecapsule': return obj.data.locked ? '🔒 locked time capsule' : `"${obj.data.text}"`;
       default: return 'something';
+    }
+  }
+
+  /** Live-patch an open popup / quick-react palette with freshly synced counts. */
+  function patchOpenCounts(objects: WallObject[]): void {
+    const popupEl = document.querySelector('.object-info-popup') as HTMLElement | null;
+    const openId = popupEl?.dataset.objectId;
+    if (!openId) return;
+    const openObj = objects.find(o => o.id === openId);
+    if (!openObj) return;
+    popupEl.querySelectorAll('.oi-react-btn').forEach(btn => {
+      const emoji = (btn as HTMLElement).dataset.emoji!;
+      const el = btn.querySelector('.oi-count');
+      if (el) el.textContent = String(getReactionCount(openObj, emoji));
+    });
+    const qp = document.querySelector('.quick-react') as HTMLElement | null;
+    if (qp && qp.dataset.objectId === openId) {
+      qp.querySelectorAll('.qr-btn').forEach(btn => {
+        const emoji = (btn as HTMLElement).dataset.emoji!;
+        const el = btn.querySelector('.qr-count');
+        if (el) el.textContent = getReactionCount(openObj, emoji) ? String(getReactionCount(openObj, emoji)) : '';
+      });
     }
   }
 
@@ -859,37 +938,49 @@ updateObject(obj.id, { reactions });
     }
   }
 
-  function openComments(obj: WallObject): void {
+  function openComments(obj: WallObject, fromConfession = false): void {
+    // The corridor frames the same panel as replies to a confession.
+    const isConfession = fromConfession || obj.type === 'confession';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal">
-        <h3>💬 Comments</h3>
+        <h3>${isConfession ? '💬 Replies' : '💬 Comments'}</h3>
         <div style="max-height:200px;overflow-y:auto;margin-bottom:12px" class="comments-list">
           ${(obj.comments || []).map(c => `
             <div style="padding:8px 0;border-bottom:1px solid var(--border)">
               <span style="font-size:11px;color:var(--accent);font-family:var(--mono)">@${c.user}</span>
               <span style="font-size:12px;color:var(--text-dim);margin-left:6px">${c.text}</span>
+              ${isConfession ? `<span class="comment-hide" data-id="${c.id}" title="hide this reply">🚩</span>` : ''}
               <div style="font-size:10px;color:var(--text-muted)">${formatTimeAgo(c.createdAt)}</div>
             </div>
-          `).join('') || '<div style="font-size:12px;color:var(--text-muted)">no comments yet</div>'}
+          `).join('') || `<div style="font-size:12px;color:var(--text-muted)">${isConfession ? 'no replies yet — be the first to hold this one' : 'no comments yet'}</div>`}
         </div>
-        <input type="text" placeholder="leave a comment..." class="comment-input" style="width:100%;padding:10px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;font-family:var(--font)" />
-        <button class="modal-close" style="margin-top:12px" id="send-comment">Send</button>
+        <input type="text" placeholder="${isConfession ? 'leave a reply...' : 'leave a comment...'}" class="comment-input" style="width:100%;padding:10px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;font-family:var(--font)" />
+        <button class="modal-close" style="margin-top:12px" id="send-comment">${isConfession ? 'Reply' : 'Send'}</button>
       </div>
     `;
     container.appendChild(overlay);
+
+    // One-click floor for abusive replies to a confession (scoped to the corridor).
+    overlay.querySelectorAll('.comment-hide').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = (el as HTMLElement).dataset.id!;
+        hideComment(id);
+        (el.closest('div') as HTMLElement | null)?.remove();
+        showDiscoveryMessage('reply hidden 🕯️');
+      });
+    });
 
     const input = overlay.querySelector('.comment-input') as HTMLInputElement;
     const send = () => {
       const text = input.value.trim();
       if (!text) return;
       const profile = loadUserProfile() || userProfile;
-      const comments = [...(obj.comments || []), { user: profile.username, text, createdAt: Date.now() }];
-      updateObject(obj.id, { comments });
+      addComment(obj.id, text);
       input.value = '';
       overlay.remove();
-      showDiscoveryMessage(`💬 @${profile.username} commented`);
+      showDiscoveryMessage(`💬 @${profile.username} ${isConfession ? 'replied' : 'commented'}`);
     };
 
     overlay.querySelector('#send-comment')?.addEventListener('click', send);
